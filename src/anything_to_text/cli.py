@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import List, Sequence
 
+from anything_to_text import __version__
 from anything_to_text.constants import (
     CATEGORY_DESCRIPTIONS,
     DEFAULT_MAX_LINES,
@@ -234,7 +235,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version="%(prog)s 1.0.0",
+        version=f"%(prog)s {__version__}",
     )
     return parser
 
