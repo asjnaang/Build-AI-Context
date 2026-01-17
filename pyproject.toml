@@ -1,0 +1,81 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "anything-to-text"
+version = "0.3.2"
+description = "Export source code and project files into AI-friendly text bundles with manifest"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.8"
+authors = [
+    { name = "ASJN" }
+]
+keywords = [
+    "code",
+    "export",
+    "ai",
+    "llm",
+    "source-code",
+    "text",
+    "copilot",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pathspec>=0.9.0",
+    "rich>=10.0.0",
+    "questionary>=1.10.0",
+]
+
+[project.optional-dependencies]
+all = []  # All deps are now included by default
+dev = ["pytest>=7.0.0"]
+
+[project.scripts]
+anything-to-text = "anything_to_text.cli:main"
+att = "anything_to_text.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/asjnaang/anything-to-text"
+Documentation = "https://github.com/asjnaang/anything-to-text#readme"
+Repository = "https://github.com/asjnaang/anything-to-text"
+Issues = "https://github.com/asjnaang/anything-to-text/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/anything_to_text"]
+
+[tool.ruff]
+target-version = "py38"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "UP",  # pyupgrade
+]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
