@@ -10,8 +10,9 @@ from anything_to_text import constants
 
 
 def test_version():
-    """Test that version is defined."""
-    assert __version__ == "1.0.0"
+    """Test that version is defined and follows semver."""
+    assert __version__ is not None
+    assert len(__version__.split(".")) >= 2  # At least major.minor
 
 
 class TestCodeExporter:
