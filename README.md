@@ -67,38 +67,6 @@ anything-to-text . --include-secret-files
 att . --include-secret-files
 ```
 
-### Python API
-
-```python
-from pathlib import Path
-from anything_to_text import CodeExporter, ExportConfig
-
-# Simple export
-exporter = CodeExporter()
-result = exporter.export(
-    project_root="/path/to/project",
-    categories=["python", "typescript"],
-    interactive=False,
-    project_overview=True,
-)
-
-print(f"Created {result.bundles_created} bundles")
-print(f"Exported {result.files_exported} files")
-print(f"Output directory: {result.output_dir}")
-
-# Or use configuration object
-config = ExportConfig(
-    project_root=Path("/path/to/project"),
-    max_lines=10000,
-    include_secret_files=False,
-    categories=["python", "web_ui"],
-    interactive=False,
-)
-
-exporter = CodeExporter(config)
-result = exporter.export()
-```
-
 ## Output Files
 
 After running, you'll get:
