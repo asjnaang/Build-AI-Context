@@ -1,5 +1,5 @@
 """
-Constants and configuration for anything_to_text package.
+Constants and configuration for build_ai_context package.
 """
 
 from typing import Dict, Set
