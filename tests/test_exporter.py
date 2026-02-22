@@ -1,12 +1,12 @@
-"""Tests for anything_to_text package."""
+"""Tests for build_ai_context package."""
 
 import pytest
 from pathlib import Path
 
-from anything_to_text import __version__
-from anything_to_text.exporter import CodeExporter
-from anything_to_text.models import ExportConfig, ExportResult, FileChunk, SourceFile
-from anything_to_text import constants
+from build_ai_context import __version__
+from build_ai_context.exporter import CodeExporter
+from build_ai_context.models import ExportConfig, ExportResult, FileChunk, SourceFile
+from build_ai_context import constants
 
 
 def test_version():
