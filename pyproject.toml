@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "build-ai-context"
-version = "1.0.1"
+version = "1.0.2"
 description = "Export source code and project files into AI-friendly text bundles with manifest"
 readme = "README.md"
 license = "MIT"
@@ -49,8 +49,8 @@ all = []  # All deps are now included by default
 dev = ["pytest>=7.0.0"]
 
 [project.scripts]
-build-ai-context = "build_ai_context.cli:main"
-baic = "build_ai_context.cli:main"
+build-ai-context = "build_ai_context.cli:interactive_main"
+baic = "build_ai_context.cli:interactive_main"
 
 [project.urls]
 Homepage = "https://github.com/asjnaang/build-ai-context"
