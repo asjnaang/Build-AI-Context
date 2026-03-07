@@ -25,6 +25,7 @@ def prompt_yes_no(message: str, default: bool = True) -> bool:
     if not raw:
         return default
     return raw in {"y", "yes"}
+    return raw in {"y", "yes"}
 
 
 def ask_choice(prompt: str, valid_choices: Sequence[str], default: str | None = None) -> str:
@@ -94,6 +95,43 @@ def render_folder_table(
             print(f"- {folder:30} files={data['files']:4} lines={data['lines']:6}")
 
 
+def render_selection_modes(exporter: CodeExporter) -> None:
+    """Render selection mode options with nice formatting using Rich."""
+    if exporter._console:
+        from rich.panel import Panel
+
+        console = exporter._console
+
+        options = [
+            ("1", "all", "Export everything supported"),
+            ("2", "category", "Pick categories (python, typescript, etc.)"),
+            ("3", "path", "Pick files/folders by path"),
+            ("4", "mixed", "Categories + paths + name filters"),
+            ("5", "keyword", "Search by keywords in file content"),
+        ]
+
+        content = ""
+        for num, name, desc in options:
+            content += f"{num}) {name:<12} -> {desc}\n"
+
+        panel = Panel(
+            content.strip(),
+            title="Selection modes",
+            border_style="white",
+            padding=(0, 1),
+        )
+        console.print(panel)
+    else:
+        print("\nSelection modes:")
+        print("  1) all       -> export everything supported")
+        print("  2) category  -> pick categories like python, typescript, ios_apple")
+        print(
+            "  3) path      -> pick files/folders by relative path, absolute path, or just filename"
+        )
+        print("  4) mixed     -> categories + paths + file name contains filter")
+        print("  5) keyword   -> search by keywords in file content and build context")
+
+
 def interactive_select_files(
     exporter: CodeExporter,
     all_files: Sequence[SourceFile],
@@ -111,12 +149,7 @@ def interactive_select_files(
     render_category_table(exporter, all_files)
     render_folder_table(exporter, all_files)
 
-    print("\nSelection modes:")
-    print("  1) all       -> export everything supported")
-    print("  2) category  -> pick categories like python, typescript, ios_apple")
-    print("  3) path      -> pick files/folders by relative path, absolute path, or just filename")
-    print("  4) mixed     -> categories + paths + file name contains filter")
-    print("  5) keyword   -> search by keywords in file content and build context")
+    render_selection_modes(exporter)
 
     mode = ask_choice("Choose selection mode", ["1", "2", "3", "4", "5"], default="1")
     selected = list(all_files)
@@ -183,22 +216,24 @@ def interactive_select_files(
             matched_files, matched_keywords = exporter.filter_files_by_keywords(
                 list(all_files), keywords
             )
-            print(
+            exporter.print_info(
                 f"Found {len(matched_files)} file(s) containing keywords: {', '.join(matched_keywords)}"
             )
             if matched_files:
-                print("Matching files: " + ", ".join(f.rel_path.as_posix() for f in matched_files))
+                exporter.print_info("Matching files:")
+                for f in matched_files:
+                    exporter.print_info(f"  - {f.rel_path.as_posix()}")
                 if prompt_yes_no("Build context for these files?"):
                     selected = matched_files
                     metadata["name_filters"] = matched_keywords
                     metadata["selected_paths"] = [f.rel_path.as_posix() for f in matched_files]
                 else:
                     selected = []
-                    print("No files selected.")
+                    exporter.print_warning("No files selected.")
             else:
-                print("No files found matching the keywords.")
+                exporter.print_warning("No files found matching the keywords.")
         else:
-            print("No keywords entered.")
+            exporter.print_warning("No keywords entered.")
 
     selected.sort(key=lambda item: item.rel_path.as_posix())
     print(f"Selected {len(selected)} file(s) out of {len(all_files)} supported file(s).")
@@ -279,8 +314,13 @@ def main() -> int:
     """Main entry point for the CLI."""
     parser = build_parser()
     args = parser.parse_args()
+    return run_exporter(args, None)
 
-    exporter = CodeExporter()
+
+def run_exporter(args, exporter) -> int:
+    """Run the exporter with given arguments."""
+    if exporter is None:
+        exporter = CodeExporter()
 
     try:
         root = Path(args.project_root).expanduser().resolve()
@@ -404,5 +444,31 @@ def main() -> int:
         return 1
 
 
+def interactive_main() -> int:
+    """Main entry point for interactive mode with loop."""
+    exporter = CodeExporter()
+    parser = build_parser()
+    args = parser.parse_args()
+
+    while True:
+        result = run_exporter(args, exporter)
+
+        if result != 0:
+            return result
+
+        if args.non_interactive:
+            return 0
+
+        user_input = input("Do you want to export more files? [Y/n]: ")
+
+        if user_input.strip().lower() in ("", "y", "yes"):
+            print("\n" + "=" * 50)
+            print("Starting new export...")
+            print("=" * 50 + "\n")
+        else:
+            print("\nGoodbye!")
+            return 0
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(interactive_main())
