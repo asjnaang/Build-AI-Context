@@ -1,5 +1,5 @@
 """
-Command-line interface for anything_to_text package.
+Command-line interface for build_ai_context package.
 """
 
 from __future__ import annotations
@@ -9,13 +9,13 @@ import sys
 from pathlib import Path
 from typing import List, Sequence
 
-from anything_to_text import __version__
-from anything_to_text.constants import (
+from build_ai_context import __version__
+from build_ai_context.constants import (
     CATEGORY_DESCRIPTIONS,
     DEFAULT_MAX_LINES,
 )
-from anything_to_text.exporter import CodeExporter
-from anything_to_text.models import SourceFile
+from build_ai_context.exporter import CodeExporter
+from build_ai_context.models import SourceFile
 
 
 def prompt_yes_no(message: str, default: bool = True) -> bool:
@@ -179,9 +179,9 @@ def interactive_select_files(
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser."""
     parser = argparse.ArgumentParser(
-        prog="anything-to-text",
+        prog="build-ai-context",
         description="Export supported source files into AI-friendly text bundles with a manifest. "
-                    "Use 'att' as a short alias for 'anything-to-text'.",
+                    "Use 'baic' as a short alias for 'build-ai-context'.",
     )
     parser.add_argument(
         "project_root",

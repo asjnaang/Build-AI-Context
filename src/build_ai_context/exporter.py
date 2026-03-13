@@ -1,5 +1,5 @@
 """
-Core export functionality for anything_to_text package.
+Core export functionality for build_ai_context package.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from typing import Dict, Iterable, List, Sequence, Tuple
 
 import pathspec
 
-from anything_to_text.constants import (
+from build_ai_context.constants import (
     CATEGORY_ALIASES,
     CATEGORY_DESCRIPTIONS,
     CATEGORY_EXTENSIONS,
@@ -27,8 +27,8 @@ from anything_to_text.constants import (
     INTERESTING_FILES,
     SPECIAL_FILENAMES,
 )
-from anything_to_text.models import ExportConfig, ExportResult, FileChunk, SourceFile
-from anything_to_text.redact import redact_text
+from build_ai_context.models import ExportConfig, ExportResult, FileChunk, SourceFile
+from build_ai_context.redact import redact_text
 
 
 class CodeExporter:
@@ -595,7 +595,7 @@ class CodeExporter:
         }
 
         manifest: Dict[str, object] = {
-            "tool": "anything-to-text",
+            "tool": "build-ai-context",
             "created_at_utc": datetime.now(timezone.utc).isoformat(),
             "project_root": str(root),
             "max_lines_per_bundle": max_lines,
@@ -659,7 +659,7 @@ class CodeExporter:
 
         summary_path = output_dir / "README_EXPORT.txt"
         summary_text = [
-            "anything-to-text Exporter\n",
+            "build-ai-context Exporter\n",
             "=====================\n\n",
             f"Project root            : {root}\n",
             f"Created at (UTC)        : {manifest['created_at_utc']}\n",

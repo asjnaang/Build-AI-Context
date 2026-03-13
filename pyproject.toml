@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "anything-to-text"
-version = "0.3.5"
+name = "build-ai-context"
+version = "1.0.0"
 description = "Export source code and project files into AI-friendly text bundles with manifest"
 readme = "README.md"
 license = "MIT"
@@ -49,17 +49,17 @@ all = []  # All deps are now included by default
 dev = ["pytest>=7.0.0"]
 
 [project.scripts]
-anything-to-text = "anything_to_text.cli:main"
-att = "anything_to_text.cli:main"
+build-ai-context = "build_ai_context.cli:main"
+baic = "build_ai_context.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/asjnaang/anything-to-text"
-Documentation = "https://github.com/asjnaang/anything-to-text#readme"
-Repository = "https://github.com/asjnaang/anything-to-text"
-Issues = "https://github.com/asjnaang/anything-to-text/issues"
+Homepage = "https://github.com/asjnaang/build-ai-context"
+Documentation = "https://github.com/asjnaang/build-ai-context#readme"
+Repository = "https://github.com/asjnaang/build-ai-context"
+Issues = "https://github.com/asjnaang/build-ai-context/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/anything_to_text"]
+packages = ["src/build_ai_context"]
 
 [tool.ruff]
 target-version = "py39"

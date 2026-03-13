@@ -1,6 +1,6 @@
 """Tests for redaction module."""
 
-from anything_to_text.redact import redact_text, REDACTION_MARK
+from build_ai_context.redact import redact_text, REDACTION_MARK
 
 
 class TestRedaction:
