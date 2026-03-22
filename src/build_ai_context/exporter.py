@@ -7,6 +7,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import re
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -27,6 +28,8 @@ from build_ai_context.constants import (
     DEFAULT_TEXT_ENCODING,
     EXTRA_EXCLUDED_PATTERNS,
     INTERESTING_FILES,
+    LARGE_FILE_SKIP_LINES,
+    LARGE_FILE_WARN_LINES,
     SPECIAL_FILENAMES,
 )
 from build_ai_context.models import ExportConfig, ExportResult, FileChunk, SourceFile
@@ -298,6 +301,104 @@ class CodeExporter:
         """Parse comma-separated input into a list of strings."""
         return [token.strip() for token in raw.split(",") if token.strip()]
 
+    def parse_intelligent_input(
+        self, raw: str, files: Sequence[SourceFile], root: Path
+    ) -> List[str]:
+        """Intelligently parse input that might have mixed commas, spaces, or no separators."""
+        if not raw.strip():
+            return []
+
+        all_path_strs = {f.rel_path.as_posix() for f in files}
+        all_names = {f.rel_path.name for f in files}
+        found_paths = []
+
+        parts = [p.strip() for p in re.split(r"[,;\s]+", raw) if p.strip()]
+
+        for part in parts:
+            original_part = part
+
+            if Path(part).is_absolute():
+                try:
+                    rel = Path(part).resolve().relative_to(root)
+                    part = rel.as_posix()
+                except ValueError:
+                    pass
+
+            if part in all_path_strs:
+                if part not in found_paths:
+                    found_paths.append(part)
+                continue
+
+            if part in all_names:
+                for p in all_path_strs:
+                    if p.endswith("/" + part) or p == part:
+                        if p not in found_paths:
+                            found_paths.append(p)
+                continue
+
+            exact_matches = [p for p in all_path_strs if p == part or p.endswith("/" + part)]
+            if exact_matches:
+                for m in exact_matches:
+                    if m not in found_paths:
+                        found_paths.append(m)
+                continue
+
+            folder_matches = [
+                p for p in all_path_strs if p.startswith(part + "/") or "/" + part + "/" in p
+            ]
+            if folder_matches:
+                for m in folder_matches:
+                    if m not in found_paths:
+                        found_paths.append(m)
+                continue
+
+            contains_matches = [p for p in all_path_strs if part in p]
+            if contains_matches:
+                for m in contains_matches:
+                    if m not in found_paths:
+                        found_paths.append(m)
+                continue
+
+            partial = [
+                p
+                for p in all_path_strs
+                if p.replace("/", "")
+                .replace("\\", "")
+                .startswith(part.replace("/", "").replace("\\", ""))
+            ]
+            if partial:
+                for m in partial:
+                    if m not in found_paths:
+                        found_paths.append(m)
+                continue
+
+            for ext in [
+                ".dart",
+                ".py",
+                ".js",
+                ".ts",
+                ".kt",
+                ".java",
+                ".swift",
+                ".md",
+                ".json",
+                ".yaml",
+                ".xml",
+                ".txt",
+                ".properties",
+            ]:
+                if ext in part:
+                    matching_files = [
+                        p for p in all_path_strs if p.endswith(part) or p.endswith("/" + part)
+                    ]
+                    for m in matching_files:
+                        if m not in found_paths:
+                            found_paths.append(m)
+                    if matching_files:
+                        break
+
+        return found_paths
+
     # -------------------------------------------------------------------------
     # Non-interactive selection
     # -------------------------------------------------------------------------
@@ -494,6 +595,7 @@ class CodeExporter:
         """Split files into chunks respecting max_lines limit."""
         skipped: List[Dict[str, object]] = []
         chunks: List[FileChunk] = []
+        large_file_warnings: List[Dict[str, object]] = []
 
         overhead = self.chunk_overhead_lines()
         content_limit = max_lines - overhead
@@ -503,6 +605,27 @@ class CodeExporter:
             )
 
         for item in files:
+            if item.line_count >= LARGE_FILE_SKIP_LINES:
+                skipped.append(
+                    {
+                        "path": item.rel_path.as_posix(),
+                        "reason": "large_file_exceeds_skip_threshold",
+                        "line_count": item.line_count,
+                        "threshold": LARGE_FILE_SKIP_LINES,
+                    }
+                )
+                continue
+
+            if item.line_count >= LARGE_FILE_WARN_LINES:
+                large_file_warnings.append(
+                    {
+                        "path": item.rel_path.as_posix(),
+                        "reason": "large_file_warning",
+                        "line_count": item.line_count,
+                        "threshold": LARGE_FILE_WARN_LINES,
+                    }
+                )
+
             if item.line_count <= content_limit:
                 chunks.append(
                     FileChunk(
@@ -562,6 +685,10 @@ class CodeExporter:
                 item_chunks.append(chunk)
             if not chunk_failed:
                 chunks.extend(item_chunks)
+
+        for warning in large_file_warnings:
+            skipped.append(warning)
+
         return chunks, skipped
 
     def pack_chunks(
@@ -647,7 +774,8 @@ class CodeExporter:
         }
 
         for index, bundle in enumerate(bundles, start=1):
-            bundle_name = f"bundle_{index:03d}.txt"
+            folder_name = root.name.replace(" ", "_")
+            bundle_name = f"bundle_{index:03d}_{folder_name}.txt"
             bundle_path = output_dir / bundle_name
             text_parts: List[str] = []
             next_bundle_line = 1
