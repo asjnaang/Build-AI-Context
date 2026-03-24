@@ -17,6 +17,7 @@ CATEGORY_EXTENSIONS: Dict[str, Set[str]] = {
     "java_kotlin": {".java", ".kt", ".kts", ".gradle", ".properties", ".pro"},
     "ios_apple": {".swift", ".m", ".mm", ".h", ".hpp", ".pbxproj", ".plist", ".xcconfig"},
     "web_ui": {".html", ".css", ".scss", ".sass", ".less", ".vue", ".svelte"},
+    "shell": {".sh", ".bash", ".zsh"},
     "config_docs": {".json", ".yaml", ".yml", ".xml", ".toml", ".graphql", ".gql", ".md", ".txt"},
 }
 
@@ -93,6 +94,22 @@ DEFAULT_EXCLUDED_DIRS: Set[str] = {
     "bin",
     "obj",
     "target",
+    ".github",
+}
+
+# Extra file patterns to skip (not in .gitignore but not needed for context)
+EXTRA_EXCLUDED_PATTERNS: Set[str] = {
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lockb",
+    "*.lock",
+    ".DS_Store",
+    "thumbs.db",
+    "*.swp",
+    "*.swo",
+    "*~",
+    ".DS_Store",
 }
 
 # Secret-like file patterns to skip by default
@@ -124,6 +141,7 @@ CATEGORY_DESCRIPTIONS: Dict[str, str] = {
     "java_kotlin": "Android / JVM (Java, Kotlin, Gradle, properties)",
     "ios_apple": "iOS / Apple platform files",
     "web_ui": "HTML / CSS / UI frameworks",
+    "shell": "Shell scripts (bash, zsh)",
     "config_docs": "Config / metadata / docs",
 }
 
@@ -147,6 +165,10 @@ CATEGORY_ALIASES: Dict[str, str] = {
     "web": "web_ui",
     "frontend": "web_ui",
     "ui": "web_ui",
+    "shell": "shell",
+    "bash": "shell",
+    "zsh": "shell",
+    "sh": "shell",
     "config": "config_docs",
     "docs": "config_docs",
 }

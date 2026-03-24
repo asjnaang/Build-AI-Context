@@ -116,11 +116,14 @@ def interactive_select_files(
     print("  2) category  -> pick categories like python, typescript, ios_apple")
     print("  3) path      -> pick files/folders by relative path, absolute path, or just filename")
     print("  4) mixed     -> categories + paths + file name contains filter")
+    print("  5) keyword   -> search by keywords in file content and build context")
 
-    mode = ask_choice("Choose selection mode", ["1", "2", "3", "4"], default="1")
+    mode = ask_choice("Choose selection mode", ["1", "2", "3", "4", "5"], default="1")
     selected = list(all_files)
     metadata = {
-        "selection_mode": {"1": "all", "2": "category", "3": "path", "4": "mixed"}[mode],
+        "selection_mode": {"1": "all", "2": "category", "3": "path", "4": "mixed", "5": "keyword"}[
+            mode
+        ],
         "selected_categories": [],
         "selected_paths": [],
         "name_filters": [],
@@ -171,6 +174,32 @@ def interactive_select_files(
                 if any(token.lower() in item.rel_path.as_posix().lower() for token in filters)
             ]
 
+    if mode == "5":
+        raw = input(
+            "Enter comma-separated keywords to search in file content (example: TODO,FIXME,debug): "
+        ).strip()
+        keywords = exporter.parse_csv_input(raw)
+        if keywords:
+            matched_files, matched_keywords = exporter.filter_files_by_keywords(
+                list(all_files), keywords
+            )
+            print(
+                f"Found {len(matched_files)} file(s) containing keywords: {', '.join(matched_keywords)}"
+            )
+            if matched_files:
+                print("Matching files: " + ", ".join(f.rel_path.as_posix() for f in matched_files))
+                if prompt_yes_no("Build context for these files?"):
+                    selected = matched_files
+                    metadata["name_filters"] = matched_keywords
+                    metadata["selected_paths"] = [f.rel_path.as_posix() for f in matched_files]
+                else:
+                    selected = []
+                    print("No files selected.")
+            else:
+                print("No files found matching the keywords.")
+        else:
+            print("No keywords entered.")
+
     selected.sort(key=lambda item: item.rel_path.as_posix())
     print(f"Selected {len(selected)} file(s) out of {len(all_files)} supported file(s).")
     return selected, metadata
@@ -181,7 +210,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="build-ai-context",
         description="Export supported source files into AI-friendly text bundles with a manifest. "
-                    "Use 'baic' as a short alias for 'build-ai-context'.",
+        "Use 'baic' as a short alias for 'build-ai-context'.",
     )
     parser.add_argument(
         "project_root",
@@ -216,6 +245,12 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="*",
         default=[],
         help="Relative paths, absolute paths, or filenames to include in non-interactive mode.",
+    )
+    parser.add_argument(
+        "--keywords",
+        nargs="*",
+        default=[],
+        help="Keywords to search in file content (non-interactive mode).",
     )
     parser.add_argument(
         "--include-secret-files",
@@ -273,12 +308,32 @@ def main() -> int:
         exporter.print_info(f"Detected {len(all_files)} supported text file(s).")
 
         if args.non_interactive:
-            selected_files, selection_metadata = exporter.non_interactive_select_files(
-                all_files,
-                categories=args.categories,
-                path_prefixes=args.paths,
-                root=root,
-            )
+            if args.keywords:
+                matched_files, matched_keywords = exporter.filter_files_by_keywords(
+                    all_files, args.keywords
+                )
+                if matched_files:
+                    exporter.print_info(
+                        f"Found {len(matched_files)} file(s) containing keywords: {', '.join(matched_keywords)}"
+                    )
+                    selected_files = matched_files
+                    selection_metadata = {
+                        "selection_mode": "keyword",
+                        "selected_categories": [],
+                        "selected_paths": [f.rel_path.as_posix() for f in matched_files],
+                        "name_filters": matched_keywords,
+                        "missing_paths": [],
+                    }
+                else:
+                    exporter.print_warning("No files found matching the keywords.")
+                    return 0
+            else:
+                selected_files, selection_metadata = exporter.non_interactive_select_files(
+                    all_files,
+                    categories=args.categories,
+                    path_prefixes=args.paths,
+                    root=root,
+                )
         else:
             selected_files, selection_metadata = interactive_select_files(exporter, all_files, root)
 
