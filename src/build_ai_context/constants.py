@@ -97,6 +97,11 @@ DEFAULT_EXCLUDED_DIRS: Set[str] = {
     ".github",
 }
 
+# Directory prefixes to always skip (paths starting with these)
+DEFAULT_EXCLUDED_PREFIXES: Set[str] = {
+    "exported_sources",
+}
+
 # Extra file patterns to skip (not in .gitignore but not needed for context)
 EXTRA_EXCLUDED_PATTERNS: Set[str] = {
     "package-lock.json",
