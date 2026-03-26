@@ -89,8 +89,8 @@ class TestCodeExporter:
         assert CodeExporter.should_skip_by_prefix(rel_path) is True
 
     def test_should_skip_by_prefix_nested(self):
-        """Test that nested exported_sources prefix is skipped."""
-        rel_path = Path("some") / Path("exported_sources") / "bundle.txt"
+        """Test that exported_sources folder at start is skipped."""
+        rel_path = Path("exported_sources_myproject") / "bundle.txt"
         assert CodeExporter.should_skip_by_prefix(rel_path) is True
 
     def test_should_not_skip_by_prefix_unrelated(self):

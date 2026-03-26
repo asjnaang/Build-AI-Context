@@ -9,6 +9,10 @@ DEFAULT_MAX_LINES: int = 8000
 DEFAULT_OUTPUT_DIR: str = "exported_sources"
 DEFAULT_TEXT_ENCODING: str = "utf-8"
 
+# Large file thresholds
+LARGE_FILE_WARN_LINES: int = 1500
+LARGE_FILE_SKIP_LINES: int = 3000
+
 # Category extensions mapping
 CATEGORY_EXTENSIONS: Dict[str, Set[str]] = {
     "python": {".py"},
@@ -18,6 +22,7 @@ CATEGORY_EXTENSIONS: Dict[str, Set[str]] = {
     "ios_apple": {".swift", ".m", ".mm", ".h", ".hpp", ".pbxproj", ".plist", ".xcconfig"},
     "web_ui": {".html", ".css", ".scss", ".sass", ".less", ".vue", ".svelte"},
     "shell": {".sh", ".bash", ".zsh"},
+    "flutter": {".dart"},
     "config_docs": {".json", ".yaml", ".yml", ".xml", ".toml", ".graphql", ".gql", ".md", ".txt"},
 }
 
@@ -53,6 +58,9 @@ SPECIAL_FILENAMES: Set[str] = {
     "settings.gradle.kts",
     "build.gradle",
     "build.gradle.kts",
+    "pubspec.yaml",
+    "pubspec.lock",
+    "analysis_options.yaml",
 }
 
 # Directories to always skip
@@ -147,6 +155,7 @@ CATEGORY_DESCRIPTIONS: Dict[str, str] = {
     "ios_apple": "iOS / Apple platform files",
     "web_ui": "HTML / CSS / UI frameworks",
     "shell": "Shell scripts (bash, zsh)",
+    "flutter": "Flutter / Dart",
     "config_docs": "Config / metadata / docs",
 }
 
@@ -174,6 +183,8 @@ CATEGORY_ALIASES: Dict[str, str] = {
     "bash": "shell",
     "zsh": "shell",
     "sh": "shell",
+    "flutter": "flutter",
+    "dart": "flutter",
     "config": "config_docs",
     "docs": "config_docs",
 }

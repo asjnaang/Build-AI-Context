@@ -57,12 +57,14 @@ python,shell,config_docs
 Specify exact paths, filenames, or folder names:
 
 ```bash
-# Non-interactive
+# Non-interactive - handles spaces intelligently
 baic . --non-interactive --paths src app tests
 
-# In interactive mode, choose option 3, then enter:
-src,main.py,README.md
+# Mixed commas and spaces work too
+baic . --non-interactive --paths "main.py utils.py, helpers.py"
 ```
+
+The tool intelligently parses paths even if you mix commas and spaces or omit separators.
 
 ### 4) mixed - Categories + Paths + Name Filters
 Combine categories, paths, and filename filters:
@@ -84,6 +86,8 @@ baic . --non-interactive --keywords TODO FIXME,BUG,HACK
 # - Function names (e.g., "authenticate", "validate")
 # - Error handling patterns
 ```
+
+In interactive mode, you'll see a checkbox UI with all matching files pre-selected. Uncheck any files you don't want, then press Enter to bundle.
 
 ## CLI Options
 
@@ -111,11 +115,12 @@ baic . --non-interactive --keywords TODO FIXME,BUG,HACK
 | `ios_apple` | `.swift`, `.m`, `.h`, `.plist` |
 | `web_ui` | `.html`, `.css`, `.scss`, `.vue`, `.svelte` |
 | `shell` | `.sh`, `.bash`, `.zsh` |
+| `flutter` | `.dart` |
 | `config_docs` | `.json`, `.yaml`, `.toml`, `.md` |
 
 ### Category Aliases
 
-Shortcuts you can use: `py`→`python`, `ts`→`typescript`, `js`→`javascript`, `android`→`java_kotlin`, `ios`→`ios_apple`, `web`→`web_ui`, `sh`→`shell`
+Shortcuts you can use: `py`→`python`, `ts`→`typescript`, `js`→`javascript`, `android`→`java_kotlin`, `ios`→`ios_apple`, `web`→`web_ui`, `sh`→`shell`, `dart`→`flutter`
 
 ## Output Files
 
@@ -123,7 +128,7 @@ After running, you'll get:
 
 | File | Description |
 |------|-------------|
-| `bundle_001.txt`, `bundle_002.txt`, ... | Text bundles with your code + metadata headers |
+| `bundle_001_<project>.txt`, `bundle_002_<project>.txt`, ... | Text bundles (named with project folder) |
 | `MANIFEST.json` | Maps every file to its bundle and line numbers |
 | `README_EXPORT.txt` | Quick summary of what was exported |
 | `PROJECT_OVERVIEW.txt` | (with `--project-overview`) Architecture overview |
@@ -177,10 +182,15 @@ def authenticate(user):
 
 ### Automatically Skipped (No config needed)
 
-- **Directories**: `.git`, `node_modules`, `__pycache__`, `.gradle`, `build`, `dist`, `target`, etc.
+- **Directories**: `.git`, `node_modules`, `__pycache__`, `.gradle`, `build`, `dist`, `target`, `.github`
 - **Exported bundles**: `exported_sources*` folders (prevents re-bundling previous exports)
 - **Lock files**: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`
 - **System files**: `.DS_Store`, `thumbs.db`, `*.swp`
+
+### Large Files
+
+- **>= 1500 lines**: Exported with a warning (may need cleanup)
+- **>= 3000 lines**: Skipped automatically (shown separately for manual handling)
 
 ### Secrets (Skipped by default, include with `--include-secret-files`)
 
