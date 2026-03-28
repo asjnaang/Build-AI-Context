@@ -44,9 +44,10 @@ class CodeExporter:
     into text bundles with a manifest for AI assistant consumption.
     """
 
-    def __init__(self, config: ExportConfig | None = None):
+    def __init__(self, config: ExportConfig | None = None, redact: bool = False):
         """Initialize the exporter with optional configuration."""
         self.config = config
+        self.redact = redact
         self._rich_available = False
         self._console = None
         self._questionary_available = False
@@ -567,11 +568,14 @@ class CodeExporter:
     def render_chunk_block(self, chunk: FileChunk) -> str:
         """Render a complete chunk block with header and footer.
 
-        All lines are passed through redaction to remove secrets/tokens.
+        Lines are passed through redaction only if redaction is enabled.
         """
         parts: List[str] = [self.bundle_header(chunk)]
         for line in chunk.lines:
-            parts.append(redact_text(line) + "\n")
+            if self.redact:
+                parts.append(redact_text(line) + "\n")
+            else:
+                parts.append(line + "\n")
         parts.append(self.bundle_footer(chunk))
         return "".join(parts)
 
@@ -734,6 +738,153 @@ class CodeExporter:
         project_name = root.name.replace(" ", "_") or "project"
         return f"{DEFAULT_OUTPUT_DIR}_{project_name}_{timestamp}"
 
+    def _get_file_icon(self, filename: str, category: str | None = None) -> str:
+        """Get icon for a file based on its extension or name."""
+        from build_ai_context.icons import get_file_icon
+
+        return get_file_icon(filename, category)
+
+    def generate_filetree(self, files: Sequence[SourceFile], root: Path) -> str:
+        """Generate a filetree with full paths for AI assistants."""
+        from collections import defaultdict
+
+        # Group files by their immediate parent directory with icons
+        by_parent: Dict[str, List[Tuple[str, str]]] = defaultdict(list)
+        for f in sorted(files, key=lambda x: x.rel_path.as_posix()):
+            parts = f.rel_path.as_posix().split("/")
+            icon = self._get_file_icon(parts[-1], f.category)
+            if len(parts) == 1:
+                by_parent["."].append((parts[0], icon))
+            else:
+                parent = "/".join(parts[:-1])
+                by_parent[parent].append((parts[-1], icon))
+
+        lines: List[str] = [f"{root.name}/"]
+
+        # Get all unique parent directories sorted
+        all_parents = sorted(set(k for k in by_parent.keys() if k != "."))
+
+        # Render root-level files
+        root_files = sorted(by_parent.get(".", []), key=lambda x: x[0])
+        for i, (fname, icon) in enumerate(root_files):
+            is_last = i == len(root_files) - 1 and not all_parents
+            connector = "└── " if is_last else "├── "
+            lines.append(f"{connector}{icon} {fname}")
+
+        # Group parents by top-level directory
+        top_level_groups: Dict[str, List[str]] = defaultdict(list)
+        for parent in all_parents:
+            top = parent.split("/")[0]
+            top_level_groups[top].append(parent)
+
+        # Render each top-level directory
+        top_dirs = sorted(top_level_groups.keys())
+        for i, top_dir in enumerate(top_dirs):
+            parents_in_group = sorted(top_level_groups[top_dir])
+            remaining = len(top_dirs) - i - 1
+            is_last_top = remaining == 0 and len(root_files) == 0
+            connector = "└── " if is_last_top else "├── "
+
+            # Check if this is a simple single-file directory
+            if len(parents_in_group) == 1 and parents_in_group[0] == top_dir:
+                # Direct files in this directory only
+                files_here = sorted(by_parent.get(top_dir, []), key=lambda x: x[0])
+                if len(files_here) <= 3:
+                    # Show compact: dir/ -> icon file1, icon file2, icon file3
+                    file_list = ", ".join(f"{icon} {fname}" for fname, icon in files_here)
+                    lines.append(f"{connector}{top_dir}/ [{file_list}]")
+                else:
+                    lines.append(f"{connector}{top_dir}/")
+                    sub_prefix = "    " if is_last_top else "│   "
+                    for j, (fname, icon) in enumerate(files_here):
+                        is_last_file = j == len(files_here) - 1
+                        fc = "└── " if is_last_file else "├── "
+                        lines.append(f"{sub_prefix}{fc}{icon} {fname}")
+            else:
+                # Complex directory with nested structure
+                lines.append(f"{connector}{top_dir}/")
+                sub_prefix = "    " if is_last_top else "│   "
+                self._render_parent_group(parents_in_group, by_parent, top_dir, sub_prefix, lines)
+
+        # Add file type summary at the end
+        lines.append("")
+        lines.append("─" * 40)
+        lines.append("📊 File Summary:")
+        type_counts: Dict[str, int] = defaultdict(int)
+        for f in files:
+            icon = self._get_file_icon(f.rel_path.name, f.category)
+            type_counts[icon] += 1
+
+        for icon, count in sorted(type_counts.items(), key=lambda x: (-x[1], x[0])):
+            from build_ai_context.icons import get_icon_display_name
+
+            type_name = get_icon_display_name(icon)
+            lines.append(f"  {icon} {type_name:<12} × {count}")
+
+        lines.append(f"  ───")
+        lines.append(f"  📁  Total: {len(files)} files")
+
+        return "\n".join(lines)
+
+    def _render_parent_group(
+        self,
+        parents: List[str],
+        by_parent: Dict[str, List[Tuple[str, str]]],
+        top_dir: str,
+        prefix: str,
+        lines: List[str],
+    ) -> None:
+        """Render a group of parent directories under a top-level directory."""
+        for i, parent in enumerate(parents):
+            is_last = i == len(parents) - 1
+            connector = "└── " if is_last else "├── "
+
+            files_here = sorted(by_parent.get(parent, []), key=lambda x: x[0])
+
+            if parent == top_dir:
+                # Direct files in top directory
+                for j, (fname, icon) in enumerate(files_here):
+                    is_last_file = j == len(files_here) - 1 and i == len(parents) - 1
+                    fc = "└── " if is_last_file else "├── "
+                    lines.append(f"{prefix}{fc}{icon} {fname}")
+            else:
+                # Nested subdirectory
+                rel_path = parent[len(top_dir) + 1 :]
+                lines.append(f"{prefix}{connector}{rel_path}/")
+                sub_prefix = prefix + ("    " if is_last else "│   ")
+                for j, (fname, icon) in enumerate(files_here):
+                    is_last_file = j == len(files_here) - 1
+                    fc = "└── " if is_last_file else "├── "
+                    lines.append(f"{sub_prefix}{fc}{icon} {fname}")
+
+    def update_gitignore(self, root: Path, filetree_name: str) -> None:
+        """Update .gitignore to ignore exported_sources and filetree files."""
+        gitignore_path = root / ".gitignore"
+
+        existing_lines: List[str] = []
+        if gitignore_path.exists():
+            existing_lines = gitignore_path.read_text(encoding="utf-8").splitlines()
+
+        existing_content = "\n".join(existing_lines)
+        new_lines: List[str] = []
+
+        if "# build-ai-context generated files" not in existing_content:
+            new_lines.extend(["", "# build-ai-context generated files"])
+
+        if not any(line.strip() == "exported_sources*/" for line in existing_lines):
+            new_lines.append("exported_sources*/")
+
+        # Use wildcard pattern for filetree files to cover all timestamps
+        filetree_pattern = "*_file_tree_*.txt"
+        if not any(line.strip() == filetree_pattern for line in existing_lines):
+            new_lines.append(filetree_pattern)
+
+        if new_lines:
+            with open(gitignore_path, "a", encoding="utf-8") as f:
+                for line in new_lines:
+                    f.write(line + "\n")
+            self.print_info(f"Updated .gitignore with export exclusions")
+
     def write_bundles_and_manifest(
         self,
         root: Path,
@@ -745,6 +896,8 @@ class CodeExporter:
         selection_metadata: Dict[str, object],
         skip_secret_files: bool,
         skipped_during_pack: Sequence[Dict[str, object]],
+        filetree_name: str | None = None,
+        timestamp: str | None = None,
     ) -> Path:
         """Write bundles and manifest to the output directory."""
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -762,6 +915,7 @@ class CodeExporter:
             "skip_secret_like_files": skip_secret_files,
             "selection": selection_metadata,
             "selected_files": [item.rel_path.as_posix() for item in selected_files],
+            "filetree": filetree_name,
             "summary": {
                 "selected_file_count": len(selected_files),
                 "selected_total_lines": sum(item.line_count for item in selected_files),
@@ -773,13 +927,63 @@ class CodeExporter:
             "bundles": [],
         }
 
+        # Use provided timestamp or extract from output_dir name for consistency
+        folder_name = root.name.replace(" ", "_")
+        if timestamp is None:
+            # Extract timestamp from output_dir name (e.g., exported_sources_project_20260328T120000Z)
+            dir_name = output_dir.name
+            parts = dir_name.split("_")
+            if len(parts) >= 3:
+                timestamp = parts[-1]  # Last part is the timestamp
+            else:
+                timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+        # Read filetree content for bundling (will be prepended to first bundle)
+        filetree_content: str | None = None
+        if filetree_name:
+            filetree_path = output_dir / filetree_name
+            if filetree_path.exists():
+                filetree_content = filetree_path.read_text(encoding="utf-8")
+
         for index, bundle in enumerate(bundles, start=1):
-            folder_name = root.name.replace(" ", "_")
-            bundle_name = f"bundle_{index:03d}_{folder_name}.txt"
+            bundle_name = f"{folder_name}_bundle_{index:03d}_{timestamp}.txt"
             bundle_path = output_dir / bundle_name
             text_parts: List[str] = []
             next_bundle_line = 1
             bundle_files: List[Dict[str, object]] = []
+
+            # Prepend filetree to the first bundle
+            if index == 1 and filetree_content:
+                filetree_header = f"""{"=" * 60}
+===== FILETREE: Project Structure =====
+{"=" * 60}
+"""
+                filetree_footer = f"""
+{"=" * 60}
+===== END FILETREE =====
+{"=" * 60}
+"""
+                filetree_block = filetree_header + filetree_content + filetree_footer
+                text_parts.append(filetree_block)
+                filetree_line_count = len(filetree_block.splitlines())
+                bundle_files.append(
+                    {
+                        "path": filetree_name,
+                        "category": "filetree",
+                        "size_bytes": len(filetree_content),
+                        "sha256": "",
+                        "total_file_lines": filetree_line_count,
+                        "chunk_index": 1,
+                        "chunk_count": 1,
+                        "file_start_line": 1,
+                        "file_end_line": filetree_line_count,
+                        "file_line_count": filetree_line_count,
+                        "bundle_start_line": 1,
+                        "bundle_end_line": filetree_line_count,
+                        "bundle_line_count": filetree_line_count,
+                    }
+                )
+                next_bundle_line = filetree_line_count + 1
 
             for chunk in bundle:
                 rel_path_str = chunk.rel_path.as_posix()
@@ -818,7 +1022,11 @@ class CodeExporter:
                 }
             )
 
-        summary_path = output_dir / "README_EXPORT.txt"
+        manifest_name = f"{folder_name}_manifest_{timestamp}.json"
+        manifest_path = output_dir / manifest_name
+
+        readme_name = f"{folder_name}_readme_{timestamp}.txt"
+        summary_path = output_dir / readme_name
         summary_text = [
             "build-ai-context Exporter\n",
             "=====================\n\n",
@@ -832,14 +1040,13 @@ class CodeExporter:
             f"Skipped during pack     : {len(skipped_during_pack)}\n\n",
             "How to use\n",
             "----------\n",
-            "1) Attach one or more bundle_XXX.txt files to your AI assistant.\n",
-            "2) Attach MANIFEST.json as well so the assistant understands the mapping.\n",
+            f"1) Attach one or more bundle_*.txt files to your AI assistant.\n",
+            f"2) Attach {manifest_name} as well so the assistant understands the mapping.\n",
             "3) Use bundles[].files[].bundle_start_line / bundle_end_line for exact positions.\n",
             "4) Use bundles[].files[].file_start_line / file_end_line for original source ranges.\n",
         ]
         summary_path.write_text("".join(summary_text), encoding=DEFAULT_TEXT_ENCODING)
 
-        manifest_path = output_dir / "MANIFEST.json"
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding=DEFAULT_TEXT_ENCODING)
         return manifest_path
 
@@ -931,6 +1138,7 @@ class CodeExporter:
         selected_files: Sequence[SourceFile],
         output_dir: Path,
         selection_metadata: Dict[str, object],
+        manifest_name: str,
     ) -> Path:
         """Write a project overview file."""
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -993,15 +1201,19 @@ class CodeExporter:
 
         lines.append("7) Notes\n")
         lines.append("--------\n")
-        lines.append("- Use this file together with MANIFEST.json and the bundle_XXX.txt files.\n")
+        lines.append(f"- Use this file together with {manifest_name} and the bundle_*.txt files.\n")
         lines.append(
-            "- Start from the suggested reading order, then use MANIFEST.json to locate exact file chunks.\n"
+            f"- Start from the suggested reading order, then use {manifest_name} to locate exact file chunks.\n"
         )
         lines.append(
             "- If asking targeted questions, attach only the most relevant bundles first.\n"
         )
 
-        overview_path = output_dir / "PROJECT_OVERVIEW.txt"
+        # Generate timestamped overview filename
+        folder_name = root.name.replace(" ", "_")
+        timestamp = datetime.now().strftime("%d%m%y%H%M%S")
+        overview_name = f"{folder_name}_overview_{timestamp}.txt"
+        overview_path = output_dir / overview_name
         overview_path.write_text("".join(lines), encoding=DEFAULT_TEXT_ENCODING)
         return overview_path
 
@@ -1018,6 +1230,7 @@ class CodeExporter:
         paths: List[str] | None = None,
         interactive: bool = True,
         project_overview: bool = False,
+        include_filetree: bool = True,
     ) -> ExportResult:
         """
         Run the full export process.
@@ -1040,6 +1253,8 @@ class CodeExporter:
             Whether to run in interactive mode.
         project_overview : bool
             Whether to generate PROJECT_OVERVIEW.txt.
+        include_filetree : bool
+            Whether to generate a filetree with full paths.
 
         Returns
         -------
@@ -1069,6 +1284,7 @@ class CodeExporter:
                 overview_path=None,
                 bundles_created=0,
                 files_exported=0,
+                filetree_path=None,
             )
 
         self.print_info(f"Detected {len(all_files)} supported text file(s).")
@@ -1100,6 +1316,7 @@ class CodeExporter:
                 overview_path=None,
                 bundles_created=0,
                 files_exported=0,
+                filetree_path=None,
             )
 
         chunks, skipped_during_split = self.split_into_chunks(selected_files, max_lines)
@@ -1111,6 +1328,25 @@ class CodeExporter:
             if output_dir
             else Path.cwd() / self.sanitize_output_dir_name(root)
         )
+
+        # Extract timestamp from output_dir name for consistency
+        dir_name = out_dir.name
+        dir_parts = dir_name.split("_")
+        timestamp = (
+            dir_parts[-1]
+            if len(dir_parts) >= 3
+            else datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        )
+
+        # Always generate filetree from ALL files - AI needs full project view
+        out_dir.mkdir(parents=True, exist_ok=True)
+        filetree_content = self.generate_filetree(all_files, root)
+        folder_name = root.name.replace(" ", "_")
+        filetree_name = f"{folder_name}_file_tree_{timestamp}.txt"
+        filetree_path: Optional[Path] = out_dir / filetree_name
+        filetree_path.write_text(filetree_content, encoding="utf-8")
+        self.print_success(f"Filetree created  : {filetree_path}")
+
         manifest_path = self.write_bundles_and_manifest(
             root=root,
             selected_files=selected_files,
@@ -1121,6 +1357,8 @@ class CodeExporter:
             selection_metadata=selection_metadata,
             skip_secret_files=skip_secret_files,
             skipped_during_pack=skipped_during_processing,
+            filetree_name=filetree_name,
+            timestamp=timestamp,
         )
 
         overview_path = None
@@ -1131,6 +1369,7 @@ class CodeExporter:
                 selected_files=selected_files,
                 output_dir=out_dir,
                 selection_metadata=selection_metadata,
+                manifest_name=manifest_path.name,
             )
 
         self.print_success("\nExport complete.")
@@ -1138,6 +1377,8 @@ class CodeExporter:
         self.print_success(f"Manifest         : {manifest_path}")
         if overview_path is not None:
             self.print_success(f"Project overview : {overview_path}")
+        if filetree_path is not None:
+            self.print_success(f"Filetree         : {filetree_path}")
         self.print_success(f"Bundles created  : {len(bundles)}")
         self.print_success(f"Files exported   : {len(selected_files)}")
 
@@ -1160,4 +1401,5 @@ class CodeExporter:
             files_exported=len(selected_files),
             skipped_items=skipped_during_processing,
             missing_paths=list(missing_paths) if missing_paths else [],
+            filetree_path=filetree_path,
         )

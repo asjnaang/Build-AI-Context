@@ -68,3 +68,4 @@ class ExportResult:
     files_exported: int
     skipped_items: List[dict] = field(default_factory=list)
     missing_paths: List[str] = field(default_factory=list)
+    filetree_path: Optional[Path] = None
