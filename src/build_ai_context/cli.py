@@ -11,265 +11,20 @@ from pathlib import Path
 from typing import List, Sequence
 
 from build_ai_context import __version__
+from build_ai_context.cli_ui import (
+    interactive_select_files,
+    prompt_yes_no,
+    render_category_table,
+    render_folder_table,
+)
 from build_ai_context.constants import (
     CATEGORY_DESCRIPTIONS,
     DEFAULT_MAX_LINES,
+    extract_timestamp_from_dir_name,
+    generate_timestamp,
 )
 from build_ai_context.exporter import CodeExporter
 from build_ai_context.models import SourceFile
-
-
-def prompt_yes_no(message: str, default: bool = True) -> bool:
-    """Prompt the user for a yes/no answer."""
-    suffix = " [Y/n]: " if default else " [y/N]: "
-    raw = input(message + suffix).strip().lower()
-    if not raw:
-        return default
-    return raw in {"y", "yes"}
-    return raw in {"y", "yes"}
-
-
-def ask_choice(prompt: str, valid_choices: Sequence[str], default: str | None = None) -> str:
-    """Prompt the user to choose from valid options."""
-    valid_normalized = {choice.lower(): choice for choice in valid_choices}
-    while True:
-        suffix = f" [{'/'.join(valid_choices)}]"
-        if default:
-            suffix += f" (default: {default})"
-        raw = input(f"{prompt}{suffix}: ").strip().lower()
-        if not raw and default:
-            return default
-        if raw in valid_normalized:
-            return valid_normalized[raw]
-        print(f"Please choose one of: {', '.join(valid_choices)}")
-
-
-def render_category_table(exporter: CodeExporter, files: Sequence[SourceFile]) -> None:
-    """Render a table showing files by category."""
-    summary = exporter.summarize_by_category(files)
-    if exporter._table_class and exporter._console:
-        table = exporter._table_class(title="Detected source files by category")
-        table.add_column("Category")
-        table.add_column("Description")
-        table.add_column("Files", justify="right")
-        table.add_column("Lines", justify="right")
-        table.add_column("Bytes", justify="right")
-        for category in CATEGORY_DESCRIPTIONS:
-            row = summary.get(category, {"files": 0, "lines": 0, "bytes": 0})
-            table.add_row(
-                category,
-                CATEGORY_DESCRIPTIONS[category],
-                str(row["files"]),
-                str(row["lines"]),
-                str(row["bytes"]),
-            )
-        exporter._console.print(table)
-    else:
-        print("\nDetected source files by category")
-        for category in CATEGORY_DESCRIPTIONS:
-            row = summary.get(category, {"files": 0, "lines": 0, "bytes": 0})
-            print(
-                f"- {category:12} | files={row['files']:4} lines={row['lines']:6} "
-                f"bytes={row['bytes']:8} | {CATEGORY_DESCRIPTIONS[category]}"
-            )
-
-
-def render_folder_table(
-    exporter: CodeExporter, files: Sequence[SourceFile], limit: int = 20
-) -> None:
-    """Render a table showing top folders."""
-    folder_summary = exporter.summarize_top_folders(files)
-    items = list(folder_summary.items())[:limit]
-    if not items:
-        return
-    if exporter._table_class and exporter._console:
-        table = exporter._table_class(title=f"Top folders (showing first {len(items)})")
-        table.add_column("Folder")
-        table.add_column("Files", justify="right")
-        table.add_column("Lines", justify="right")
-        for folder, data in items:
-            table.add_row(folder, str(data["files"]), str(data["lines"]))
-        exporter._console.print(table)
-    else:
-        print("\nTop folders")
-        for folder, data in items:
-            print(f"- {folder:30} files={data['files']:4} lines={data['lines']:6}")
-
-
-def render_selection_modes(exporter: CodeExporter) -> None:
-    """Render selection mode options with nice formatting using Rich."""
-    if exporter._console:
-        from rich.panel import Panel
-
-        console = exporter._console
-
-        options = [
-            ("1", "all", "Export everything supported"),
-            ("2", "category", "Pick categories (python, typescript, etc.)"),
-            ("3", "path", "Pick files/folders by path"),
-            ("4", "mixed", "Categories + paths + name filters"),
-            ("5", "keyword", "Search by keywords in file content"),
-        ]
-
-        content = ""
-        for num, name, desc in options:
-            content += f"{num}) {name:<12} -> {desc}\n"
-
-        panel = Panel(
-            content.strip(),
-            title="Selection modes",
-            border_style="white",
-            padding=(0, 1),
-        )
-        console.print(panel)
-    else:
-        print("\nSelection modes:")
-        print("  1) all       -> export everything supported")
-        print("  2) category  -> pick categories like python, typescript, ios_apple")
-        print(
-            "  3) path      -> pick files/folders by relative path, absolute path, or just filename"
-        )
-        print("  4) mixed     -> categories + paths + file name contains filter")
-        print("  5) keyword   -> search by keywords in file content and build context")
-
-
-def interactive_select_files(
-    exporter: CodeExporter,
-    all_files: Sequence[SourceFile],
-    root: Path,
-) -> tuple:
-    """Run interactive file selection."""
-    if not all_files:
-        return [], {
-            "selection_mode": "interactive",
-            "selected_categories": [],
-            "selected_paths": [],
-            "name_filters": [],
-        }
-
-    render_category_table(exporter, all_files)
-    render_folder_table(exporter, all_files)
-
-    render_selection_modes(exporter)
-
-    mode = ask_choice("Choose selection mode", ["1", "2", "3", "4", "5"], default="1")
-    selected = list(all_files)
-    metadata = {
-        "selection_mode": {"1": "all", "2": "category", "3": "path", "4": "mixed", "5": "keyword"}[
-            mode
-        ],
-        "selected_categories": [],
-        "selected_paths": [],
-        "name_filters": [],
-        "missing_paths": [],
-    }
-
-    if mode in {"2", "4"}:
-        print("Available categories: " + ", ".join(CATEGORY_DESCRIPTIONS.keys()))
-        raw = input(
-            "Enter categories (space or comma separated, e.g., python typescript web_ui): "
-        ).strip()
-        comma_tokens = exporter.parse_csv_input(raw)
-        space_tokens = raw.split()
-        categories = comma_tokens if len(comma_tokens) > 1 else space_tokens
-        categories = exporter.normalize_categories(categories)
-        metadata["selected_categories"] = categories
-        if categories:
-            selected = [item for item in selected if item.category in categories]
-        elif mode == "2":
-            selected = []
-
-    if mode in {"3", "4"}:
-        raw = input(
-            "Enter comma-separated file/folder paths or filenames (comma or space separated): "
-        ).strip()
-        path_inputs = exporter.parse_intelligent_input(raw, all_files, root)
-        if not path_inputs:
-            print("No valid paths entered.")
-        else:
-            selected, normalized_paths, missing_paths = exporter.filter_files_by_paths(
-                selected,
-                root,
-                path_inputs,
-                interactive=True,
-                fancy=False,
-            )
-            metadata["selected_paths"] = normalized_paths
-            metadata["missing_paths"] = missing_paths
-            if missing_paths:
-                print("These paths did not match supported files: " + ", ".join(missing_paths))
-
-    if mode == "4":
-        raw = input(
-            "Optional file-name contains filters (comma-separated, example: auth,login,api) "
-            "or press Enter to skip: "
-        ).strip()
-        filters = exporter.parse_csv_input(raw)
-        metadata["name_filters"] = filters
-        if filters:
-            selected = [
-                item
-                for item in selected
-                if any(token.lower() in item.rel_path.as_posix().lower() for token in filters)
-            ]
-
-    if mode == "5":
-        raw = input(
-            "Enter comma-separated keywords to search in file content (example: TODO,FIXME,debug): "
-        ).strip()
-        keywords = exporter.parse_csv_input(raw)
-        if keywords:
-            matched_files, matched_keywords = exporter.filter_files_by_keywords(
-                list(all_files), keywords
-            )
-            exporter.print_info(
-                f"Found {len(matched_files)} file(s) containing keywords: {', '.join(matched_keywords)}"
-            )
-            if matched_files:
-                if exporter._questionary_available:
-                    from questionary import Choice
-
-                    file_choices = [
-                        Choice(
-                            title=f.rel_path.as_posix(), value=f.rel_path.as_posix(), checked=True
-                        )
-                        for f in matched_files
-                    ]
-                    selected_paths = exporter._questionary.checkbox(
-                        "All files selected. Uncheck files to exclude which you think are not necessary to bundle, then press Enter:",
-                        choices=file_choices,
-                    ).ask()
-                    if selected_paths:
-                        selected = [
-                            f for f in matched_files if f.rel_path.as_posix() in selected_paths
-                        ]
-                        metadata["name_filters"] = matched_keywords
-                        metadata["selected_paths"] = selected_paths
-                        exporter.print_info(
-                            f"Selected {len(selected)} file(s) from keyword search."
-                        )
-                    else:
-                        selected = []
-                        exporter.print_warning("No files selected.")
-                else:
-                    exporter.print_info("Matching files:")
-                    for f in matched_files:
-                        exporter.print_info(f"  - {f.rel_path.as_posix()}")
-                    if prompt_yes_no("Build context for all these files?"):
-                        selected = matched_files
-                        metadata["name_filters"] = matched_keywords
-                        metadata["selected_paths"] = [f.rel_path.as_posix() for f in matched_files]
-                    else:
-                        selected = []
-                        exporter.print_warning("No files selected.")
-            else:
-                exporter.print_warning("No files found matching the keywords.")
-        else:
-            exporter.print_warning("No keywords entered.")
-
-    selected.sort(key=lambda item: item.rel_path.as_posix())
-    print(f"Selected {len(selected)} file(s) out of {len(all_files)} supported file(s).")
-    return selected, metadata
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -381,7 +136,7 @@ def run_tree_only(args) -> int:
 
         exporter.print_info(f"Scanning project: {root}")
 
-        # Scan files (include secrets by default for tree)
+        # Scan files
         all_files, skipped_reasons = exporter.scan_supported_files(root, skip_secret_files=True)
         if not all_files:
             exporter.print_warning("No supported files found.")
@@ -391,11 +146,12 @@ def run_tree_only(args) -> int:
 
         # Generate filetree
         filetree_content = exporter.generate_filetree(all_files, root)
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        timestamp = generate_timestamp()
         folder_name = root.name.replace(" ", "_")
         filetree_name = f"{folder_name}_file_tree_{timestamp}.txt"
         filetree_path = root / filetree_name
         filetree_path.write_text(filetree_content, encoding="utf-8")
+        exporter.update_gitignore(root, filetree_name)
 
         exporter.print_success(f"\nFiletree created: {filetree_path}")
         return 0
@@ -406,7 +162,7 @@ def run_tree_only(args) -> int:
 
 
 def run_exporter(args, exporter, pre_scanned=None) -> int:
-    """Run the exporter with given arguments. pre_scanned contains (all_files, skipped_reasons) if already scanned."""
+    """Run the exporter with given arguments."""
     if exporter is None:
         exporter = CodeExporter(redact=getattr(args, "redact", False))
 
@@ -425,12 +181,13 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
 
         skip_secret_files = not args.include_secret_files
 
-        if pre_scanned is not None:
+        if pre_scanned:
             all_files, skipped_reasons = pre_scanned
-            exporter.print_info(f"Using pre-scanned files: {len(all_files)} file(s)")
         else:
             exporter.print_info(f"Scanning project: {root}")
-            all_files, skipped_reasons = exporter.scan_supported_files(root, skip_secret_files)
+            all_files, skipped_reasons = exporter.scan_supported_files(
+                root, skip_secret_files=skip_secret_files
+            )
 
         if not all_files:
             exporter.print_warning(
@@ -473,11 +230,17 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
                     root=root,
                 )
         else:
+            render_category_table(exporter, all_files)
+            render_folder_table(exporter, all_files)
             selected_files, selection_metadata = interactive_select_files(exporter, all_files, root)
 
         if not selected_files:
             exporter.print_warning("No files selected. Nothing was exported.")
-            return 0, all_files, skipped_reasons
+            return 0, None, None
+
+        exporter.print_info(
+            f"Selected {len(selected_files)} file(s) out of {len(all_files)} supported file(s)."
+        )
 
         chunks, skipped_during_split = exporter.split_into_chunks(selected_files, args.max_lines)
         bundles, skipped_during_pack = exporter.pack_chunks(chunks, args.max_lines)
@@ -491,11 +254,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
 
         # Extract timestamp from output_dir name for consistency
         dir_name = output_dir.name
-        timestamp = (
-            dir_name.split("_")[-1]
-            if "_" in dir_name
-            else datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        )
+        timestamp = extract_timestamp_from_dir_name(dir_name)
 
         # Always generate filetree from ALL files - AI needs full project view
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -504,6 +263,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         filetree_name = f"{folder_name}_file_tree_{timestamp}.txt"
         filetree_path = output_dir / filetree_name
         filetree_path.write_text(filetree_content, encoding="utf-8")
+        exporter.update_gitignore(root, filetree_name)
         exporter.print_success(f"Filetree created  : {filetree_path}")
 
         manifest_path = exporter.write_bundles_and_manifest(
@@ -536,65 +296,28 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         exporter.print_success(f"Manifest         : {manifest_path}")
         if overview_path is not None:
             exporter.print_success(f"Project overview : {overview_path}")
+        exporter.print_success(f"Filetree         : {filetree_path}")
         exporter.print_success(f"Bundles created  : {len(bundles)}")
         exporter.print_success(f"Files exported   : {len(selected_files)}")
 
         if skipped_during_processing:
-            import json
+            exporter.print_warning("\nFiles/chunks skipped during processing:")
+            for entry in skipped_during_processing:
+                exporter.print_warning(f"  - {entry}")
 
-            large_files = [
-                s
-                for s in skipped_during_processing
-                if s.get("reason") == "large_file_exceeds_skip_threshold"
-            ]
-            large_warnings = [
-                s for s in skipped_during_processing if s.get("reason") == "large_file_warning"
-            ]
-            normal_skipped = [
-                s
-                for s in skipped_during_processing
-                if s.get("reason")
-                not in ["large_file_exceeds_skip_threshold", "large_file_warning"]
-            ]
-
-            if large_files:
-                exporter.print_warning(
-                    f"\nLarge files ({'>=' + str(3000)} lines) SKIPPED (handle separately):"
-                )
-                for item in large_files:
-                    exporter.print_warning(
-                        f"  [red]- {item['path']}[/red] ({item['line_count']} lines)"
-                    )
-
-            if large_warnings:
-                exporter.print_warning(
-                    f"\nLarge files ({'>=' + str(1500)} lines) that may need cleanup:"
-                )
-                for item in large_warnings:
-                    exporter.print_warning(f"  - {item['path']} ({item['line_count']} lines)")
-
-            if normal_skipped:
-                exporter.print_warning("\nFiles/chunks skipped during processing:")
-                for item in normal_skipped:
-                    exporter.print_warning("  - " + json.dumps(item, ensure_ascii=False))
-
-        missing_paths = selection_metadata.get("missing_paths", [])
-        if missing_paths:
-            exporter.print_warning("Paths that did not match supported files:")
-            for value in missing_paths:
-                exporter.print_warning(f"  - {value}")
-
-        exporter.print_info(
-            f"\nTip: Upload the bundle(s) and {manifest_path.name} to your AI assistant for best results."
-        )
+        if not args.non_interactive and not args.non_interactive:
+            print(
+                f"\nTip: Upload the bundle(s) and {manifest_path.name} to your AI "
+                "assistant for best results."
+            )
 
         return 0, all_files, skipped_reasons
 
-    except KeyboardInterrupt:
-        print("\nInterrupted by user.", file=sys.stderr)
-        return 130, None, None
     except Exception as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        exporter.print_error(f"Unexpected error: {exc}")
+        import traceback
+
+        traceback.print_exc()
         return 1, None, None
 
 

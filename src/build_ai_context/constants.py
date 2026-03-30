@@ -214,3 +214,27 @@ INTERESTING_FILES: Set[str] = {
     "build.gradle",
     "build.gradle.kts",
 }
+
+
+def generate_timestamp() -> str:
+    """Generate a timestamp string in UTC format YYYYMMDDTHHMMSSZ."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def is_timestamp(s: str) -> bool:
+    """Return True if s matches YYYYMMDDTHHMMSSZ."""
+    import re
+
+    return bool(re.fullmatch(r"\d{4}\d{2}\d{2}T\d{2}\d{2}\d{2}Z", s))
+
+
+def extract_timestamp_from_dir_name(dir_name: str) -> str:
+    """Extract timestamp from directory name if present, else generate a new one."""
+    parts = dir_name.split("_")
+    if parts:
+        last = parts[-1]
+        if is_timestamp(last):
+            return last
+    return generate_timestamp()
