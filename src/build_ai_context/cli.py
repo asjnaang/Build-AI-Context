@@ -20,6 +20,8 @@ from build_ai_context.cli_ui import (
 from build_ai_context.constants import (
     CATEGORY_DESCRIPTIONS,
     DEFAULT_MAX_LINES,
+    extract_timestamp_from_dir_name,
+    generate_timestamp,
 )
 from build_ai_context.exporter import CodeExporter
 from build_ai_context.models import SourceFile
@@ -144,11 +146,12 @@ def run_tree_only(args) -> int:
 
         # Generate filetree
         filetree_content = exporter.generate_filetree(all_files, root)
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        timestamp = generate_timestamp()
         folder_name = root.name.replace(" ", "_")
         filetree_name = f"{folder_name}_file_tree_{timestamp}.txt"
         filetree_path = root / filetree_name
         filetree_path.write_text(filetree_content, encoding="utf-8")
+        exporter.update_gitignore(root, filetree_name)
 
         exporter.print_success(f"\nFiletree created: {filetree_path}")
         return 0
@@ -251,11 +254,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
 
         # Extract timestamp from output_dir name for consistency
         dir_name = output_dir.name
-        timestamp = (
-            dir_name.split("_")[-1]
-            if "_" in dir_name
-            else datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        )
+        timestamp = extract_timestamp_from_dir_name(dir_name)
 
         # Always generate filetree from ALL files - AI needs full project view
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -264,6 +263,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         filetree_name = f"{folder_name}_file_tree_{timestamp}.txt"
         filetree_path = output_dir / filetree_name
         filetree_path.write_text(filetree_content, encoding="utf-8")
+        exporter.update_gitignore(root, filetree_name)
         exporter.print_success(f"Filetree created  : {filetree_path}")
 
         manifest_path = exporter.write_bundles_and_manifest(

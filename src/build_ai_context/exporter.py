@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from build_ai_context import chunking, filetree, scanner, writing
+from build_ai_context.constants import extract_timestamp_from_dir_name
 from build_ai_context.models import ExportConfig, ExportResult, FileChunk, SourceFile
 
 
@@ -293,8 +294,7 @@ class CodeExporter:
 
         # Extract timestamp from output_dir name for consistency
         dir_name = out_dir.name
-        dir_parts = dir_name.split("_")
-        timestamp = dir_parts[-1] if len(dir_parts) >= 3 else "20260328T000000Z"
+        timestamp = extract_timestamp_from_dir_name(dir_name)
 
         # Always generate filetree from ALL files - AI needs full project view
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -303,6 +303,7 @@ class CodeExporter:
         filetree_name = f"{folder_name}_file_tree_{timestamp}.txt"
         filetree_path: Optional[Path] = out_dir / filetree_name
         filetree_path.write_text(filetree_content, encoding="utf-8")
+        self.update_gitignore(root, filetree_name)
         self.print_success(f"Filetree created  : {filetree_path}")
 
         manifest_path = self.write_bundles_and_manifest(

@@ -9,14 +9,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from build_ai_context.constants import DEFAULT_OUTPUT_DIR
+from build_ai_context.constants import DEFAULT_OUTPUT_DIR, generate_timestamp
 from build_ai_context.icons import get_file_icon, get_icon_display_name
 from build_ai_context.models import SourceFile
 
 
 def sanitize_output_dir_name(root: Path) -> str:
     """Generate a sanitized output directory name with timestamp."""
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = generate_timestamp()
     project_name = root.name.replace(" ", "_") or "project"
     return f"{DEFAULT_OUTPUT_DIR}_{project_name}_{timestamp}"
 

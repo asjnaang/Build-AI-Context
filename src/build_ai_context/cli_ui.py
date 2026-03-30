@@ -135,7 +135,7 @@ def interactive_select_files(
     elif mode == "3":
         raw_paths = input("Enter paths (comma/space-separated): ")
         path_prefixes = exporter.parse_intelligent_input(raw_paths, all_files, root)
-        selected = exporter.filter_files_by_paths(all_files, path_prefixes, root)
+        selected, _, _ = exporter.filter_files_by_paths(all_files, root, path_prefixes)
         missing = set(path_prefixes) - {f.rel_path.as_posix().split("/")[0] for f in selected}
         metadata.update(
             selection_mode="path",
@@ -159,11 +159,13 @@ def interactive_select_files(
         by_category = (
             [f for f in all_files if f.category in categories] if categories else list(all_files)
         )
-        by_paths = (
-            exporter.filter_files_by_paths(by_category, path_prefixes, root)
-            if path_prefixes
-            else by_category
-        )
+        if path_prefixes:
+            filtered_by_paths, _, _ = exporter.filter_files_by_paths(
+                by_category, root, path_prefixes
+            )
+            by_paths = filtered_by_paths
+        else:
+            by_paths = by_category
         if name_filters:
             filtered = []
             for f in by_paths:
