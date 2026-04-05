@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Sequence
 
@@ -166,13 +167,11 @@ def interactive_select_files(
     if mode in {"2", "4"}:
         print("Available categories: " + ", ".join(CATEGORY_DESCRIPTIONS.keys()))
         raw = input(
-            "Enter comma-separated categories (example: python typescript web_ui): "
+            "Enter categories (space or comma separated, e.g., python typescript web_ui): "
         ).strip()
         comma_tokens = exporter.parse_csv_input(raw)
-        if comma_tokens:
-            categories = comma_tokens
-        else:
-            categories = raw.split()
+        space_tokens = raw.split()
+        categories = comma_tokens if len(comma_tokens) > 1 else space_tokens
         categories = exporter.normalize_categories(categories)
         metadata["selected_categories"] = categories
         if categories:
@@ -336,6 +335,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Generate PROJECT_OVERVIEW.txt alongside the manifest and bundles.",
     )
     parser.add_argument(
+        "--tree",
+        action="store_true",
+        help="Generate only a filetree in the current directory and exit.",
+    )
+    parser.add_argument(
+        "--redact",
+        action="store_true",
+        default=False,
+        help="Redact secrets and tokens from the output (default: disabled).",
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"%(prog)s {__version__}",
@@ -347,14 +357,58 @@ def main() -> int:
     """Main entry point for the CLI."""
     parser = build_parser()
     args = parser.parse_args()
+
+    # Handle --tree: just generate a filetree in the current directory
+    if args.tree:
+        return run_tree_only(args)
+
     result, _, _ = run_exporter(args, None)
     return result
+
+
+def run_tree_only(args) -> int:
+    """Generate only a filetree in the current directory."""
+    exporter = CodeExporter()
+
+    try:
+        root = Path(args.project_root).expanduser().resolve()
+        if not root.exists():
+            print(f"Error: Project root does not exist: {root}", file=sys.stderr)
+            return 1
+        if not root.is_dir():
+            print(f"Error: Project root is not a directory: {root}", file=sys.stderr)
+            return 1
+
+        exporter.print_info(f"Scanning project: {root}")
+
+        # Scan files (include secrets by default for tree)
+        all_files, skipped_reasons = exporter.scan_supported_files(root, skip_secret_files=True)
+        if not all_files:
+            exporter.print_warning("No supported files found.")
+            return 1
+
+        exporter.print_info(f"Detected {len(all_files)} supported file(s).")
+
+        # Generate filetree
+        filetree_content = exporter.generate_filetree(all_files, root)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        folder_name = root.name.replace(" ", "_")
+        filetree_name = f"{folder_name}_file_tree_{timestamp}.txt"
+        filetree_path = root / filetree_name
+        filetree_path.write_text(filetree_content, encoding="utf-8")
+
+        exporter.print_success(f"\nFiletree created: {filetree_path}")
+        return 0
+
+    except Exception as exc:
+        exporter.print_error(f"Unexpected error: {exc}")
+        return 1
 
 
 def run_exporter(args, exporter, pre_scanned=None) -> int:
     """Run the exporter with given arguments. pre_scanned contains (all_files, skipped_reasons) if already scanned."""
     if exporter is None:
-        exporter = CodeExporter()
+        exporter = CodeExporter(redact=getattr(args, "redact", False))
 
     try:
         root = Path(args.project_root).expanduser().resolve()
@@ -435,6 +489,23 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             else Path.cwd() / exporter.sanitize_output_dir_name(root)
         )
 
+        # Extract timestamp from output_dir name for consistency
+        dir_name = output_dir.name
+        timestamp = (
+            dir_name.split("_")[-1]
+            if "_" in dir_name
+            else datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        )
+
+        # Always generate filetree from ALL files - AI needs full project view
+        output_dir.mkdir(parents=True, exist_ok=True)
+        filetree_content = exporter.generate_filetree(all_files, root)
+        folder_name = root.name.replace(" ", "_")
+        filetree_name = f"{folder_name}_file_tree_{timestamp}.txt"
+        filetree_path = output_dir / filetree_name
+        filetree_path.write_text(filetree_content, encoding="utf-8")
+        exporter.print_success(f"Filetree created  : {filetree_path}")
+
         manifest_path = exporter.write_bundles_and_manifest(
             root=root,
             selected_files=selected_files,
@@ -445,6 +516,8 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             selection_metadata=selection_metadata,
             skip_secret_files=skip_secret_files,
             skipped_during_pack=skipped_during_processing,
+            filetree_name=filetree_name,
+            timestamp=timestamp,
         )
 
         overview_path = None
@@ -455,6 +528,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
                 selected_files=selected_files,
                 output_dir=output_dir,
                 selection_metadata=selection_metadata,
+                manifest_name=manifest_path.name,
             )
 
         exporter.print_success("\nExport complete.")
@@ -510,6 +584,10 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             for value in missing_paths:
                 exporter.print_warning(f"  - {value}")
 
+        exporter.print_info(
+            f"\nTip: Upload the bundle(s) and {manifest_path.name} to your AI assistant for best results."
+        )
+
         return 0, all_files, skipped_reasons
 
     except KeyboardInterrupt:
@@ -522,9 +600,14 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
 
 def interactive_main() -> int:
     """Main entry point for interactive mode with loop."""
-    exporter = CodeExporter()
     parser = build_parser()
     args = parser.parse_args()
+
+    # Handle --tree: just generate a filetree in the current directory
+    if args.tree:
+        return run_tree_only(args)
+
+    exporter = CodeExporter(redact=getattr(args, "redact", False))
 
     pre_scanned = None
 
