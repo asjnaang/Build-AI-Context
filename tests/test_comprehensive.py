@@ -558,7 +558,7 @@ class TestBundleFilename:
             skipped_during_pack=[],
         )
 
-        bundle_files = list(output_dir.glob("bundle_*.txt"))
+        bundle_files = list(output_dir.glob("*_bundle_*.txt"))
         assert len(bundle_files) > 0
         assert "my_project" in bundle_files[0].name
 
