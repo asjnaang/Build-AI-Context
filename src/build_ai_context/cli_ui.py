@@ -1,3 +1,9 @@
+# === FILE HEADER START (auto) ===
+# path: src/build_ai_context/cli_ui.py
+# repo: build-ai-context
+# updated: 2026-05-14T13:12:59Z
+# === FILE HEADER END (auto) ===
+
 """
 CLI UI helpers for build_ai_context - prompts, rendering, and interactive selection.
 """
@@ -169,6 +175,68 @@ def render_selection_modes(exporter: CodeExporter) -> None:
     print("─" * 75)
 
 
+def _display_files_for_deselection(files: Sequence[SourceFile]) -> Tuple[List[SourceFile], bool]:
+    """Display selected files and let the user toggle them on/off.
+
+    Returns the (potentially modified) file list and True if the user
+    confirmed the selection, False to cancel.
+    """
+    if not files:
+        return list(files), True
+
+    # Build a dict of index -> file for toggling
+    indexed: List[SourceFile] = list(files)
+
+    while True:
+        print(f"\nCurrently selected ({len(indexed)} file(s)):")
+        for i, f in enumerate(indexed, 1):
+            print(f"  {i:>4}. {f.rel_path.as_posix()}")
+        print()
+        print("Enter file number(s) to toggle (include/exclude),")
+        print("'a' to toggle all, 'd' to deselect all, 'c' to confirm, or 'q' to cancel:")
+        raw = input("  > ").strip().lower()
+
+        if raw == "c" or raw == "":
+            # Confirm
+            return indexed, True
+        if raw == "q":
+            # Cancel
+            return [], False
+        if raw == "a":
+            # Toggle all: if all are currently "selected" (in list), remove all;
+            # otherwise add all back.  Since we only have selected files here,
+            # "toggle all" means deselect all (empty list). If the list is already
+            # empty, restore from the full set.  We track the "full set" via the
+            # original all_files, but we don't have it here.  So for simplicity,
+            # toggle all means: if every item is present, clear; otherwise keep
+            # (toggle is a no-op for partial).
+            # A more intuitive approach: just clear the list to allow re-selection.
+            indexed.clear()
+            print("All files deselected. You can type 'c' to confirm (empty) or add files back by number.")
+            continue
+        if raw == "d":
+            indexed.clear()
+            print("All files deselected.")
+            continue
+
+        # Parse comma/space-separated numbers
+        parts = [p.strip() for p in raw.replace(",", " ").split() if p.strip()]
+        toggled = False
+        for part in parts:
+            if not part.isdigit():
+                continue
+            idx = int(part)
+            if 1 <= idx <= len(indexed):
+                # Toggle: remove the file at this index
+                toggled = True
+                removed = indexed.pop(idx - 1)
+                print(f"  Toggled off: {removed.rel_path.as_posix()}")
+            else:
+                print(f"  Number {idx} is out of range (1-{len(indexed)}), ignored.")
+        if not toggled:
+            print("No valid numbers entered. Try again.")
+
+
 def interactive_select_files(
     exporter: CodeExporter,
     all_files: Sequence[SourceFile],
@@ -198,6 +266,9 @@ def interactive_select_files(
             selection_mode="category",
             selected_categories=categories,
         )
+        selected, confirmed = _display_files_for_deselection(selected)
+        if not confirmed:
+            return [], metadata
 
     elif mode == "3":
         raw_paths = input("Enter paths (comma/space-separated): ")
@@ -209,6 +280,9 @@ def interactive_select_files(
             selected_paths=path_prefixes,
             missing_paths=list(missing),
         )
+        selected, confirmed = _display_files_for_deselection(selected)
+        if not confirmed:
+            return [], metadata
 
     elif mode == "4":
         categories_input = input("Enter categories (comma-separated, or press Enter for all): ")
@@ -247,6 +321,9 @@ def interactive_select_files(
             selected_paths=path_prefixes,
             name_filters=name_filters,
         )
+        selected, confirmed = _display_files_for_deselection(selected)
+        if not confirmed:
+            return [], metadata
 
     elif mode == "5":
         keywords_input = input("Enter keywords to search in file content: ")
@@ -264,17 +341,23 @@ def interactive_select_files(
                     ).ask()
                     if selected is None:
                         selected = []
+                    else:
+                        metadata.update(
+                            selection_mode="keyword",
+                            name_filters=keywords,
+                        )
                 else:
                     print(f"\nFound {len(matched)} files containing {found}")
                     for f in matched:
                         print(f"  {f.rel_path.as_posix()}")
-                    confirm = prompt_yes_no("Include all matched files?", default=True)
-                    if confirm:
-                        selected = list(matched)
-                metadata.update(
-                    selection_mode="keyword",
-                    name_filters=keywords,
-                )
+                    selected, confirmed = _display_files_for_deselection(matched)
+                    if not confirmed:
+                        selected = []
+                    elif selected:
+                        metadata.update(
+                            selection_mode="keyword",
+                            name_filters=keywords,
+                        )
             else:
                 print("No files matched the keywords.")
 

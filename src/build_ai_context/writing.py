@@ -1,3 +1,9 @@
+# === FILE HEADER START (auto) ===
+# path: src/build_ai_context/writing.py
+# repo: build-ai-context
+# updated: 2026-05-14T13:12:59Z
+# === FILE HEADER END (auto) ===
+
 """
 Project overview and manifest writing for build_ai_context.
 """
@@ -15,6 +21,36 @@ from build_ai_context.constants import (
     DEFAULT_TEXT_ENCODING,
 )
 from build_ai_context.models import FileChunk, SourceFile
+
+PROMPT_MD_LINES = [
+    "<!-- === CONTEXT USAGE PROMPT === -->",
+    "# How to use these files",
+    "",
+    "You have been provided with a set of source files extracted from a project.",
+    "The manifest file (JSON) describes the project structure, selected files, and metadata.",
+    "",
+    "## Guidelines",
+    "",
+    "1. **Read the manifest** first to understand the project structure and selection metadata.",
+    "2. **Read the filetree** to understand the full project layout.",
+    "3. **Use the bundles** to read the actual source code content.",
+    "4. **Respect the original file paths** shown in each chunk header.",
+    "",
+    "<!-- Replace the <tasks_contract> section below with your specific task or question -->",
+    "<tasks_contract>",
+    "TODO: Replace this with your specific task, question, or analysis goal.",
+    "For example: \"Analyze the project structure and suggest improvements\"",
+    "or \"Find all usages of the deprecated API in src/api/v1/\"",
+    "</tasks_contract>",
+    "",
+    "<!-- Feel free to update any other parts of this prompt if needed for better results -->",
+    "<!-- === END CONTEXT USAGE PROMPT === -->",
+]
+
+
+def get_prompt_md_content() -> str:
+    """Return the prompt.md content to prepend to each bundle."""
+    return "\n".join(PROMPT_MD_LINES) + "\n"
 
 
 def detect_dependency_files(all_files: Sequence[SourceFile]) -> List[str]:
@@ -229,12 +265,12 @@ def write_bundles_and_manifest(
         else:
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
-    # Read filetree content for bundling (will be prepended to first bundle)
-    filetree_content: Optional[str] = None
-    if filetree_name:
-        filetree_path = output_dir / filetree_name
-        if filetree_path.exists():
-            filetree_content = filetree_path.read_text(encoding="utf-8")
+    # Prepare prompt.md content to prepend to every bundle
+    prompt_content = get_prompt_md_content()
+
+    # Write standalone prompt.md file in the output directory
+    prompt_md_path = output_dir / "prompt.md"
+    prompt_md_path.write_text(prompt_content, encoding="utf-8")
 
     for index, bundle in enumerate(bundles, start=1):
         bundle_name = f"{folder_name}_bundle_{index:03d}_{timestamp}.txt"
@@ -243,31 +279,10 @@ def write_bundles_and_manifest(
         next_bundle_line = 1
         bundle_files: List[Dict[str, object]] = []
 
-        # Prepend filetree to the first bundle
-        if index == 1 and filetree_content:
-            filetree_header = f"{'=' * 60}\n===== FILETREE: Project Structure =====\n{'=' * 60}\n"
-            filetree_footer = f"\n{'=' * 60}\n===== END FILETREE =====\n{'=' * 60}\n"
-            filetree_block = filetree_header + filetree_content + filetree_footer
-            text_parts.append(filetree_block)
-            filetree_line_count = len(filetree_block.splitlines())
-            bundle_files.append(
-                {
-                    "path": filetree_name,
-                    "category": "filetree",
-                    "size_bytes": len(filetree_content),
-                    "sha256": "",
-                    "total_file_lines": filetree_line_count,
-                    "chunk_index": 1,
-                    "chunk_count": 1,
-                    "file_start_line": 1,
-                    "file_end_line": filetree_line_count,
-                    "file_line_count": filetree_line_count,
-                    "bundle_start_line": 1,
-                    "bundle_end_line": filetree_line_count,
-                    "bundle_line_count": filetree_line_count,
-                }
-            )
-            next_bundle_line = filetree_line_count + 1
+        # Prepend prompt.md content to every bundle
+        text_parts.append(prompt_content)
+        prompt_line_count = len(prompt_content.splitlines())
+        next_bundle_line += prompt_line_count
 
         for chunk in bundle:
             rel_path_str = chunk.rel_path.as_posix()
