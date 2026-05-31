@@ -25,6 +25,7 @@ from build_ai_context.constants import (
 )
 from build_ai_context.exporter import CodeExporter
 from build_ai_context.models import SourceFile
+from build_ai_context.update_source_file_headers import DEFAULT_EXCLUDES, walk_and_update
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -101,6 +102,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Redact secrets and tokens from the output (default: disabled).",
     )
     parser.add_argument(
+        "--update-headers",
+        action="store_true",
+        help="Run the update-source-file-headers script to tag all project files with metadata headers.",
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"%(prog)s {__version__}",
@@ -113,12 +119,28 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
+    # Handle --update-headers
+    if args.update_headers:
+        return run_update_headers(args)
+
     # Handle --tree: just generate a filetree in the current directory
     if args.tree:
         return run_tree_only(args)
 
     result, _, _ = run_exporter(args, None)
     return result
+
+
+def run_update_headers(args) -> int:
+    """Run the update-source-file-headers script."""
+    root = Path(args.project_root).expanduser().resolve()
+    if not root.exists():
+        print(f"Error: Project root does not exist: {root}", file=sys.stderr)
+        return 1
+    if not root.is_dir():
+        print(f"Error: Project root is not a directory: {root}", file=sys.stderr)
+        return 1
+    return walk_and_update(root, set(DEFAULT_EXCLUDES), False)
 
 
 def run_tree_only(args) -> int:
@@ -310,6 +332,11 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
                 f"\nTip: Upload the bundle(s) and {manifest_path.name} to your AI "
                 "assistant for best results."
             )
+            print(
+                f"\n💡 Edit 'prompt.md' in the output directory to add your task or question "
+                f"(replace the <tasks_contract> section). The prompt is automatically "
+                f"included in every bundle to guide the AI."
+            )
 
         return 0, all_files, skipped_reasons
 
@@ -325,6 +352,10 @@ def interactive_main() -> int:
     """Main entry point for interactive mode with loop."""
     parser = build_parser()
     args = parser.parse_args()
+
+    # Handle --update-headers
+    if args.update_headers:
+        return run_update_headers(args)
 
     # Handle --tree: just generate a filetree in the current directory
     if args.tree:
