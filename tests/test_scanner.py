@@ -185,8 +185,8 @@ class TestInteractiveSelection:
         """Test that interactive path selection works (mock input)."""
         root, files = sample_files
         exporter = CodeExporter()
-        # Simulate user choosing mode 3 and entering path "src"
-        inputs = iter(["3", "src"])
+        # Simulate user choosing mode 3, entering path "src", then confirming deselection
+        inputs = iter(["3", "src", "c"])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
         # Mock filter_files_by_paths to verify correct arguments
         from build_ai_context import cli_ui
