@@ -194,6 +194,7 @@ class CodeExporter:
         skip_secret_files: bool,
         skipped_during_pack: Sequence[Dict[str, object]],
         filetree_name: Optional[str] = None,
+        filetree_content: Optional[str] = None,
         timestamp: Optional[str] = None,
     ) -> Path:
         """Write bundles and manifest to the output directory."""
@@ -208,6 +209,7 @@ class CodeExporter:
             skip_secret_files,
             skipped_during_pack,
             filetree_name,
+            filetree_content,
             timestamp,
             self.redact,
         )
@@ -301,10 +303,7 @@ class CodeExporter:
         filetree_content = self.generate_filetree(all_files, root)
         folder_name = root.name.replace(" ", "_")
         filetree_name = f"{folder_name}_file_tree_{timestamp}.txt"
-        filetree_path: Optional[Path] = out_dir / filetree_name
-        filetree_path.write_text(filetree_content, encoding="utf-8")
         self.update_gitignore(root, filetree_name)
-        self.print_success(f"Filetree created  : {filetree_path}")
 
         manifest_path = self.write_bundles_and_manifest(
             root=root,
@@ -317,6 +316,7 @@ class CodeExporter:
             skip_secret_files=skip_secret_files,
             skipped_during_pack=skipped_during_processing,
             filetree_name=filetree_name,
+            filetree_content=filetree_content,
             timestamp=timestamp,
         )
 
@@ -336,8 +336,6 @@ class CodeExporter:
         self.print_success(f"Manifest         : {manifest_path}")
         if overview_path is not None:
             self.print_success(f"Project overview : {overview_path}")
-        if filetree_path is not None:
-            self.print_success(f"Filetree         : {filetree_path}")
         self.print_success(f"Bundles created  : {len(bundles)}")
         self.print_success(f"Files exported   : {len(selected_files)}")
 
@@ -349,5 +347,5 @@ class CodeExporter:
             files_exported=len(selected_files),
             skipped_items=skipped_during_processing,
             missing_paths=list(selection_metadata.get("missing_paths", [])),
-            filetree_path=filetree_path,
+            filetree_path=None,
         )
