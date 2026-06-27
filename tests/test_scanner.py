@@ -185,6 +185,7 @@ class TestInteractiveSelection:
         """Test that interactive path selection works (mock input)."""
         root, files = sample_files
         exporter = CodeExporter()
+        exporter._questionary_available = False  # force numbered-list fallback
         # Simulate user choosing mode 3, entering path "src", then confirming deselection
         inputs = iter(["3", "src", "c"])
         monkeypatch.setattr("builtins.input", lambda _: next(inputs))
