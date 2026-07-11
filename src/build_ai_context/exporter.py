@@ -132,10 +132,15 @@ class CodeExporter:
         return chunking.chunk_overhead_lines(self.redact)
 
     def split_into_chunks(
-        self, files: Sequence[SourceFile], max_lines: int
+        self,
+        files: Sequence[SourceFile],
+        max_lines: int,
+        max_file_lines: int | None = None,
     ) -> Tuple[List[FileChunk], List[Dict[str, object]]]:
         """Split files into chunks respecting max lines."""
-        return chunking.split_into_chunks(files, max_lines, self.redact)
+        return chunking.split_into_chunks(
+            files, max_lines, self.redact, max_file_lines=max_file_lines
+        )
 
     def pack_chunks(
         self, chunks: Sequence[FileChunk], max_lines: int
@@ -196,6 +201,7 @@ class CodeExporter:
         filetree_name: Optional[str] = None,
         filetree_content: Optional[str] = None,
         timestamp: Optional[str] = None,
+        max_file_lines: int | None = None,
     ) -> Path:
         """Write bundles and manifest to the output directory."""
         return writing.write_bundles_and_manifest(
@@ -212,6 +218,7 @@ class CodeExporter:
             filetree_content,
             timestamp,
             self.redact,
+            max_file_lines=max_file_lines,
         )
 
     # -------------------------------------------------------------------------
@@ -221,6 +228,7 @@ class CodeExporter:
         self,
         project_root: Path | str | None = None,
         max_lines: int = 8000,
+        max_file_lines: int | None = None,
         output_dir: Path | str | None = None,
         include_secret_files: bool = False,
         categories: List[str] | None = None,
@@ -284,7 +292,11 @@ class CodeExporter:
                 filetree_path=None,
             )
 
-        chunks, skipped_during_split = self.split_into_chunks(selected_files, max_lines)
+        # Bundle packing size defaults to DEFAULT_MAX_LINES (8000) via max_lines.
+        # max_file_lines only controls which source files are skipped for size.
+        chunks, skipped_during_split = self.split_into_chunks(
+            selected_files, max_lines, max_file_lines=max_file_lines
+        )
         bundles, skipped_during_pack = self.pack_chunks(chunks, max_lines)
         skipped_during_processing = skipped_during_split + skipped_during_pack
 
@@ -311,6 +323,7 @@ class CodeExporter:
             bundles=bundles,
             output_dir=out_dir,
             max_lines=max_lines,
+            max_file_lines=max_file_lines,
             skipped_reasons=skipped_reasons,
             selection_metadata=selection_metadata,
             skip_secret_files=skip_secret_files,

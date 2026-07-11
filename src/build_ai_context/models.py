@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
+from build_ai_context.constants import DEFAULT_MAX_LINES, LARGE_FILE_SKIP_LINES
+
 
 @dataclass(frozen=True)
 class SourceFile:
@@ -46,7 +48,8 @@ class ExportConfig:
     """Configuration for the export process."""
 
     project_root: Path
-    max_lines: int = 8000
+    max_lines: int = DEFAULT_MAX_LINES
+    max_file_lines: int = LARGE_FILE_SKIP_LINES
     output_dir: Optional[Path] = None
     include_secret_files: bool = False
     categories: List[str] = field(default_factory=list)
