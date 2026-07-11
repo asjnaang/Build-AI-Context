@@ -591,6 +591,53 @@ class TestLargeFileHandling:
 
         large_skips = [s for s in skipped if s.get("reason") == "large_file_exceeds_skip_threshold"]
         assert len(large_skips) == 1
+        assert len(chunks) == 0
+
+    def test_max_file_lines_override_includes_large_file(self, tmp_path):
+        file1 = tmp_path / "huge.py"
+        file1.write_text("\n".join([f"line_{i}" for i in range(5000)]))
+
+        exporter = CodeExporter()
+        files, _ = exporter.scan_supported_files(tmp_path, skip_secret_files=True)
+
+        chunks, skipped = exporter.split_into_chunks(
+            files, 8000, max_file_lines=10000
+        )
+
+        large_skips = [s for s in skipped if s.get("reason") == "large_file_exceeds_skip_threshold"]
+        assert len(large_skips) == 0
+        assert len(chunks) >= 1
+        assert sum(len(c.lines) for c in chunks) == 5000
+
+    def test_max_file_lines_zero_disables_skip(self, tmp_path):
+        file1 = tmp_path / "huge.py"
+        file1.write_text("\n".join([f"line_{i}" for i in range(5000)]))
+
+        exporter = CodeExporter()
+        files, _ = exporter.scan_supported_files(tmp_path, skip_secret_files=True)
+
+        chunks, skipped = exporter.split_into_chunks(files, 2000, max_file_lines=0)
+
+        large_skips = [s for s in skipped if s.get("reason") == "large_file_exceeds_skip_threshold"]
+        assert len(large_skips) == 0
+        assert len(chunks) >= 2  # split across chunks due to smaller max_lines
+        assert sum(len(c.lines) for c in chunks) == 5000
+
+    def test_max_file_lines_lower_threshold_skips_sooner(self, tmp_path):
+        file1 = tmp_path / "medium.py"
+        file1.write_text("\n".join([f"line_{i}" for i in range(800)]))
+
+        exporter = CodeExporter()
+        files, _ = exporter.scan_supported_files(tmp_path, skip_secret_files=True)
+
+        chunks, skipped = exporter.split_into_chunks(
+            files, 8000, max_file_lines=500
+        )
+
+        large_skips = [s for s in skipped if s.get("reason") == "large_file_exceeds_skip_threshold"]
+        assert len(large_skips) == 1
+        assert large_skips[0]["threshold"] == 500
+        assert len(chunks) == 0
 
     def test_normal_file_not_skipped(self, tmp_path):
         file1 = tmp_path / "small.py"

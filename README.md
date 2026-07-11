@@ -99,7 +99,7 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `--paths` | Export by path/filename | `--paths src tests` |
 | `--keywords` | Search in code content | `--keywords TODO FIXME` |
 | `--non-interactive` | Run without prompts | `--non-interactive` |
-| `--max-lines` | Lines per bundle (default: 8000) | `--max-lines 10000` |
+| `--max-file-lines` | Skip repo source files with ≥ N lines when bundling (default: 3000; `0` = no limit). Bundle output size stays fixed at 8000 lines. | `--max-file-lines 10000` |
 | `--output-dir` | Custom output folder | `--output-dir ./my-bundles` |
 | `--project-overview` | Generate architecture overview | `--project-overview` |
 | `--include-secret-files` | Include .env, keys, etc. (careful!) | `--include-secret-files` |
@@ -278,7 +278,7 @@ baic . --non-interactive --paths src/components src/utils
 baic /path/to/project \
     --non-interactive \
     --categories python typescript web_ui \
-    --max-lines 10000 \
+    --max-file-lines 10000 \
     --project-overview \
     --output-dir ./ai-review-bundles
 ```
@@ -306,7 +306,7 @@ Example prompt to AI:
 ## CLI Reference
 
 ```
-usage: build-ai-context [-h] [--max-lines MAX_LINES] [--output-dir OUTPUT_DIR]
+usage: build-ai-context [-h] [--max-file-lines N] [--output-dir OUTPUT_DIR]
                        [--non-interactive] [--categories [CATEGORIES ...]]
                        [--paths [PATHS ...]] [--keywords [KEYWORDS ...]]
                        [--include-secret-files] [--project-overview]
@@ -321,7 +321,9 @@ options:
   --version             Show version
   --tree                Generate filetree only and exit
   --redact              Redact secrets from output (default: disabled)
-  --max-lines N         Max lines per bundle (default: 8000)
+  --max-file-lines N    Skip repo source files with >= N lines (default: 3000;
+                        0 disables the per-file limit). Output bundles are
+                        always packed to 8000 lines max.
   --output-dir DIR      Custom output directory
   --non-interactive     Run without prompts
   --categories CATS     Categories to export

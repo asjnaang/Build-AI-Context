@@ -5,11 +5,13 @@ Constants and configuration for build_ai_context package.
 from typing import Dict, Set
 
 # Default configuration values
+# Fixed max rendered lines per output *bundle* file. Not a CLI override.
 DEFAULT_MAX_LINES: int = 8000
 DEFAULT_OUTPUT_DIR: str = "exported_sources"
 DEFAULT_TEXT_ENCODING: str = "utf-8"
 
-# Large file thresholds
+# Large file thresholds (per repo *source* file being bundled)
+# LARGE_FILE_SKIP_LINES is the default for --max-file-lines (CLI-overridable).
 LARGE_FILE_WARN_LINES: int = 1500
 LARGE_FILE_SKIP_LINES: int = 3000
 
