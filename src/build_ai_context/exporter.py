@@ -154,7 +154,7 @@ class CodeExporter:
     sanitize_output_dir_name = staticmethod(filetree.sanitize_output_dir_name)
 
     def generate_filetree(self, files: Sequence[SourceFile], root: Path) -> str:
-        """Generate a filetree with full paths for AI assistants."""
+        """Generate a path-list filetree for AI assistants."""
         return filetree.generate_filetree(files, root)
 
     update_gitignore = staticmethod(filetree.update_gitignore)
