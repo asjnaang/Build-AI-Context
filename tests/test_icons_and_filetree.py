@@ -139,7 +139,7 @@ class TestFiletreeGeneration:
         return exporter.generate_filetree(files, tmp_path)
 
     def test_filetree_lists_full_relative_paths_one_per_line(self, tmp_path):
-        """Nested files must appear as full posix paths, one per line."""
+        """Nested files must appear as full posix paths, one per line, trailing comma."""
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "main.py").write_text("print('hello')")
         (tmp_path / "README.md").write_text("# Test")
@@ -147,19 +147,20 @@ class TestFiletreeGeneration:
         filetree = self._scan_tree(tmp_path)
         path_lines = self._section_lines(filetree, "paths:")
 
-        assert path_lines == ["README.md", "src/main.py"]
+        assert path_lines == ["README.md,", "src/main.py,"]
 
-    def test_filetree_includes_comma_separated_paths(self, tmp_path):
-        """Same files must also appear as one comma-separated line."""
+    def test_filetree_omits_paths_csv_section(self, tmp_path):
+        """A second full copy of every path is wasted tokens; paths: is enough."""
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "main.py").write_text("print('hello')")
         (tmp_path / "README.md").write_text("# Test")
         (tmp_path / "app.kt").write_text("fun main() {}")
 
         filetree = self._scan_tree(tmp_path)
-        csv_lines = self._section_lines(filetree, "paths_csv:")
 
-        assert csv_lines == ["README.md, app.kt, src/main.py"]
+        assert "paths_csv:" not in filetree
+        path_lines = self._section_lines(filetree, "paths:")
+        assert path_lines == ["README.md,", "app.kt,", "src/main.py,"]
 
     def test_filetree_omits_icons_and_box_drawing(self, tmp_path):
         """Pretty-print chrome is noise for agents; emit plain text only."""
