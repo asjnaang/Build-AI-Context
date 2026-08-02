@@ -47,6 +47,7 @@ dependencies = [
 [project.optional-dependencies]
 all = []  # All deps are now included by default
 dev = ["pytest>=7.0.0"]
+graph = ["tree-sitter-language-pack>=0.7.2"]
 
 [project.scripts]
 build-ai-context = "build_ai_context.cli:interactive_main"
