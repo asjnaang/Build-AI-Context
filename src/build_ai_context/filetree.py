@@ -56,8 +56,13 @@ def update_gitignore(root: Path, filetree_name: str) -> None:
     has_filetree = any(
         "_file_tree_" in line and not line.strip().startswith("#") for line in existing_lines
     )
-    has_graph = any(
-        "_code_graph_" in line and not line.strip().startswith("#") for line in existing_lines
+    has_graph_txt = any(
+        "*_code_graph_*.txt" in line and not line.strip().startswith("#")
+        for line in existing_lines
+    )
+    has_graph_json = any(
+        "*_code_graph_*.json" in line and not line.strip().startswith("#")
+        for line in existing_lines
     )
 
     if existing_lines and existing_lines[-1].strip():
@@ -71,9 +76,12 @@ def update_gitignore(root: Path, filetree_name: str) -> None:
         new_lines.append("# Ignore filetree files (all timestamps)")
         new_lines.append("*_file_tree_*.txt")
 
-    if not has_graph:
+    if not has_graph_txt:
         new_lines.append("# Ignore code graph files (all timestamps)")
         new_lines.append("*_code_graph_*.txt")
+    if not has_graph_json:
+        new_lines.append("# Ignore JSON code graph files (all timestamps)")
+        new_lines.append("*_code_graph_*.json")
 
     if new_lines:
         updated = existing_lines + new_lines
