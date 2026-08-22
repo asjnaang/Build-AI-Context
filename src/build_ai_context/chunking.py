@@ -26,7 +26,7 @@ def bundle_header(chunk: FileChunk) -> str:
         f"# chunk : {idx}/{total}\n"
         f"# line_range : {chunk.start_line}-{chunk.end_line}\n"
         f"# total_lines : {chunk.total_file_lines}\n"
-        f"{'=' * 60}"
+        f"{'=' * 60}\n"
     )
 
 
@@ -37,7 +37,7 @@ def bundle_footer(chunk: FileChunk) -> str:
     return (
         f"{'=' * 60}\n"
         f"===== END FILE: {chunk.rel_path.as_posix()} (chunk {idx}/{total}) =====\n"
-        f"{'=' * 60}"
+        f"{'=' * 60}\n"
     )
 
 
