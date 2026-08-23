@@ -1,5 +1,5 @@
 """
-Data models for anything_to_text package.
+Data models for build_ai_context package.
 """
 
 from __future__ import annotations

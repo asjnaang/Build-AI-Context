@@ -1,8 +1,8 @@
-# anything-to-text
+# build-ai-context
 
 Export source code and project files into AI-friendly text bundles with a compact manifest.
 
-**Commands:** `anything-to-text` or `att` (short alias)
+**Commands:** `build-ai-context` or `baic` (short alias)
 
 ## Features
 
@@ -18,7 +18,7 @@ Export source code and project files into AI-friendly text bundles with a compac
 ## Installation
 
 ```bash
-pip install anything-to-text
+pip install build-ai-context
 ```
 
 ## Quick Start
@@ -27,44 +27,44 @@ pip install anything-to-text
 
 ```bash
 # Show version
-anything-to-text --version
-att --version
+build-ai-context --version
+baic --version
 
 # Interactive mode - scan current directory
-anything-to-text
-att
+build-ai-context
+baic
 
 # Specify project root
-anything-to-text /path/to/project
-att /path/to/project
+build-ai-context /path/to/project
+baic /path/to/project
 
 # Non-interactive mode with specific categories
-anything-to-text /path/to/project --non-interactive --categories python typescript
-att /path/to/project --non-interactive --categories python typescript
+build-ai-context /path/to/project --non-interactive --categories python typescript
+baic /path/to/project --non-interactive --categories python typescript
 
 # Export specific files or folders
-anything-to-text . --non-interactive --paths src main.py
-att . --non-interactive --paths src main.py
+build-ai-context . --non-interactive --paths src main.py
+baic . --non-interactive --paths src main.py
 
 # Generate project overview
-anything-to-text . --project-overview
-att . --project-overview
+build-ai-context . --project-overview
+baic . --project-overview
 
 # Use fancy interactive UI
-anything-to-text . --fancy-ui
-att . --fancy-ui
+build-ai-context . --fancy-ui
+baic . --fancy-ui
 
 # Set custom output directory
-anything-to-text . --output-dir ./my-bundles
-att . --output-dir ./my-bundles
+build-ai-context . --output-dir ./my-bundles
+baic . --output-dir ./my-bundles
 
 # Adjust max lines per bundle
-anything-to-text . --max-lines 10000
-att . --max-lines 10000
+build-ai-context . --max-lines 10000
+baic . --max-lines 10000
 
 # Include secret files (use with caution)
-anything-to-text . --include-secret-files
-att . --include-secret-files
+build-ai-context . --include-secret-files
+baic . --include-secret-files
 ```
 
 ## Output Files
@@ -107,19 +107,19 @@ After running, you'll get:
 ### Export Python and TypeScript code for AI review
 
 ```bash
-att /my-project --non-interactive --categories python typescript --project-overview
+baic /my-project --non-interactive --categories python typescript --project-overview
 ```
 
 ### Export specific folders
 
 ```bash
-att . --non-interactive --paths src/components src/utils
+baic . --non-interactive --paths src/components src/utils
 ```
 
 ### Full export with all features
 
 ```bash
-att /path/to/project \
+baic /path/to/project \
     --non-interactive \
     --categories python typescript web_ui \
     --max-lines 10000 \
@@ -130,7 +130,7 @@ att /path/to/project \
 ### Interactive mode with fancy UI
 
 ```bash
-att . --fancy-ui
+baic . --fancy-ui
 ```
 
 ### Use with AI assistants
@@ -158,7 +158,7 @@ Use `--include-secret-files` to override this behavior (use with caution).
 ## CLI Options
 
 ```
-usage: anything-to-text [-h] [--max-lines MAX_LINES] [--output-dir OUTPUT_DIR]
+usage: build-ai-context [-h] [--max-lines MAX_LINES] [--output-dir OUTPUT_DIR]
                         [--non-interactive] [--categories [CATEGORIES ...]]
                         [--paths [PATHS ...]] [--include-secret-files]
                         [--fancy-ui] [--project-overview] [--version]
