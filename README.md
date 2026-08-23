@@ -1,19 +1,28 @@
 # build-ai-context
 
-Export source code and project files into AI-friendly text bundles with a compact manifest.
+Export source code and project files into AI-friendly text bundles with a compact manifest. Perfect for feeding your codebase to AI assistants like Claude, GPT-4, Copilot, or any LLM.
 
 **Commands:** `build-ai-context` or `baic` (short alias)
 
-## Features
+## Why use this?
 
-- **Multi-language support**: Python, TypeScript, JavaScript, Java, Kotlin, Swift, HTML/CSS, and more
-- **AI-optimized output**: Creates bundle files with embedded metadata for AI assistants
-- **Smart filtering**: Respects `.gitignore` and skips build/cache directories automatically
-- **Manifest generation**: Produces `MANIFEST.json` with precise file location mappings
-- **Project overview**: Optional `PROJECT_OVERVIEW.txt` for architecture insights
-- **Secret protection**: Skips `.env`, keys, certificates, and other sensitive files by default
-- **Fancy interactive UI**: Checkbox-style selection with questionary
-- **Large file handling**: Automatically splits large files into manageable chunks
+- **AI-Ready Output**: Bundles include metadata (file paths, line numbers, categories) so AI can precisely reference your code
+- **Smart Filtering**: Automatically skips build artifacts, dependencies, secrets, and previously exported bundles
+- **Flexible Selection**: 5 ways to select files - export everything, by category, by path, mixed, or by keywords in code
+- **Continuous Workflow**: Stay in the tool - export, then export more files without restarting
+
+## Quick Start
+
+```bash
+# Install
+pip install build-ai-context
+
+# Interactive mode (recommended for first use)
+baic
+
+# Non-interactive - export specific categories
+baic . --non-interactive --categories python typescript
+```
 
 ## Installation
 
@@ -21,51 +30,92 @@ Export source code and project files into AI-friendly text bundles with a compac
 pip install build-ai-context
 ```
 
-## Quick Start
-
-### CLI Usage
+Or for development:
 
 ```bash
-# Show version
-build-ai-context --version
-baic --version
-
-# Interactive mode - scan current directory
-build-ai-context
-baic
-
-# Specify project root
-build-ai-context /path/to/project
-baic /path/to/project
-
-# Non-interactive mode with specific categories
-build-ai-context /path/to/project --non-interactive --categories python typescript
-baic /path/to/project --non-interactive --categories python typescript
-
-# Export specific files or folders
-build-ai-context . --non-interactive --paths src main.py
-baic . --non-interactive --paths src main.py
-
-# Generate project overview
-build-ai-context . --project-overview
-baic . --project-overview
-
-# Use fancy interactive UI
-build-ai-context . --fancy-ui
-baic . --fancy-ui
-
-# Set custom output directory
-build-ai-context . --output-dir ./my-bundles
-baic . --output-dir ./my-bundles
-
-# Adjust max lines per bundle
-build-ai-context . --max-lines 10000
-baic . --max-lines 10000
-
-# Include secret files (use with caution)
-build-ai-context . --include-secret-files
-baic . --include-secret-files
+git clone https://github.com/asjnaang/build-ai-context
+cd build-ai-context
+pip install -e .
 ```
+
+## Interactive Mode (5 Ways to Select Files)
+
+When you run `baic` without flags, you'll see an interactive menu. Choose how to select files:
+
+### 1) all - Export Everything Supported
+Export all supported files in your project. Simple and complete.
+
+### 2) category - Pick by Language/Type
+Select specific categories like `python`, `typescript`, `java_kotlin`, `shell`, etc.
+
+```bash
+# In interactive mode, choose option 2, then enter:
+python,shell,config_docs
+```
+
+### 3) path - Pick Files/Folders by Path
+Specify exact paths, filenames, or folder names:
+
+```bash
+# Non-interactive
+baic . --non-interactive --paths src app tests
+
+# In interactive mode, choose option 3, then enter:
+src,main.py,README.md
+```
+
+### 4) mixed - Categories + Paths + Name Filters
+Combine categories, paths, and filename filters:
+
+```bash
+# Select python files in src folder containing "auth" or "login"
+# In interactive mode: choose 4, then enter categories, paths, and filters
+```
+
+### 5) keyword - Search Code Content
+Search for keywords in your actual code and export files containing them:
+
+```bash
+# Non-interactive
+baic . --non-interactive --keywords TODO FIXME,BUG,HACK
+
+# Interactive - great for finding:
+# - TODO/FIXME comments
+# - Function names (e.g., "authenticate", "validate")
+# - Error handling patterns
+```
+
+## CLI Options
+
+| Option | Description | Example |
+|--------|-------------|---------|
+| `project_root` | Directory to scan (default: current) | `baic /path/to/project` |
+| `--categories` | Export by category | `--categories python typescript` |
+| `--paths` | Export by path/filename | `--paths src tests` |
+| `--keywords` | Search in code content | `--keywords TODO FIXME` |
+| `--non-interactive` | Run without prompts | `--non-interactive` |
+| `--max-lines` | Lines per bundle (default: 8000) | `--max-lines 10000` |
+| `--output-dir` | Custom output folder | `--output-dir ./my-bundles` |
+| `--project-overview` | Generate architecture overview | `--project-overview` |
+| `--include-secret-files` | Include .env, keys, etc. (careful!) | `--include-secret-files` |
+| `--version` | Show version | `--version` |
+
+## Categories Supported
+
+| Category | Extensions |
+|----------|------------|
+| `python` | `.py` |
+| `typescript` | `.ts`, `.tsx` |
+| `javascript` | `.js`, `.jsx`, `.mjs`, `.cjs` |
+| `java_kotlin` | `.java`, `.kt`, `.kts`, `.gradle` |
+| `ios_apple` | `.swift`, `.m`, `.h`, `.plist` |
+| `web_ui` | `.html`, `.css`, `.scss`, `.vue`, `.svelte` |
+| `shell` | `.sh`, `.bash`, `.zsh` |
+| `config_docs` | `.json`, `.yaml`, `.toml`, `.md` |
+
+### Category Aliases
+
+Shortcuts you can use: `py`→`python`, `ts`→`typescript`, `js`→`javascript`, `android`→`java_kotlin`, `ios`→`ios_apple`, `web`→`web_ui`, `sh`→`shell`
 
 ## Output Files
 
@@ -73,41 +123,88 @@ After running, you'll get:
 
 | File | Description |
 |------|-------------|
-| `bundle_001.txt`, `bundle_002.txt`, ... | Text bundles containing your source code |
-| `MANIFEST.json` | Maps files to bundles and line ranges |
-| `README_EXPORT.txt` | Summary of the export |
-| `PROJECT_OVERVIEW.txt` | (Optional) Architecture overview |
+| `bundle_001.txt`, `bundle_002.txt`, ... | Text bundles with your code + metadata headers |
+| `MANIFEST.json` | Maps every file to its bundle and line numbers |
+| `README_EXPORT.txt` | Quick summary of what was exported |
+| `PROJECT_OVERVIEW.txt` | (with `--project-overview`) Architecture overview |
 
-## Categories
+### Bundle Format
 
-| Category | Description | Extensions |
-|----------|-------------|------------|
-| `python` | Python backend / scripts | `.py` |
-| `typescript` | TypeScript / TSX | `.ts`, `.tsx` |
-| `javascript` | JavaScript / JSX | `.js`, `.jsx`, `.mjs`, `.cjs` |
-| `java_kotlin` | Android / JVM | `.java`, `.kt`, `.kts`, `.gradle` |
-| `ios_apple` | iOS / Apple platform | `.swift`, `.m`, `.h`, etc. |
-| `web_ui` | HTML / CSS / UI | `.html`, `.css`, `.scss`, `.vue`, etc. |
-| `config_docs` | Config / metadata | `.json`, `.yaml`, `.xml`, `.toml`, `.md` |
+Each file in a bundle includes a header that AI assistants can use to locate code:
 
-### Category Aliases
+```
+# ===== BEGIN FILE: src/utils/auth.py =====
+# category : python
+# chunk : 1/1
+# line_range : 1-50
+# total_lines : 50
+# ===== CONTENT =====
+def authenticate(user):
+    ...
+# ===== END FILE: src/utils/auth.py (chunk 1/1) =====
+```
 
-| Alias | Maps to |
-|-------|---------|
-| `py` | `python` |
-| `ts`, `tsx` | `typescript` |
-| `js`, `jsx` | `javascript` |
-| `java`, `kotlin`, `android` | `java_kotlin` |
-| `ios`, `swift`, `apple` | `ios_apple` |
-| `web`, `frontend`, `ui` | `web_ui` |
-| `config`, `docs` | `config_docs` |
+### MANIFEST.json Structure
+
+```json
+{
+  "tool": "build-ai-context",
+  "selected_files": ["src/main.py", "src/utils.py"],
+  "selection": {
+    "selection_mode": "category",
+    "selected_categories": ["python"],
+    "selected_paths": []
+  },
+  "bundles": [
+    {
+      "bundle": "bundle_001.txt",
+      "files": [
+        {
+          "path": "src/main.py",
+          "category": "python",
+          "file_start_line": 1,
+          "file_end_line": 50,
+          "bundle_start_line": 10,
+          "bundle_end_line": 59
+        }
+      ]
+    }
+  ]
+}
+```
+
+## What Gets Excluded
+
+### Automatically Skipped (No config needed)
+
+- **Directories**: `.git`, `node_modules`, `__pycache__`, `.gradle`, `build`, `dist`, `target`, etc.
+- **Exported bundles**: `exported_sources*` folders (prevents re-bundling previous exports)
+- **Lock files**: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`
+- **System files**: `.DS_Store`, `thumbs.db`, `*.swp`
+
+### Secrets (Skipped by default, include with `--include-secret-files`)
+
+- `.env` files and variants
+- Private keys (`*.pem`, `*.key`, `id_rsa`)
+- Certificates, keystores, Firebase configs
 
 ## Usage Examples
 
-### Export Python and TypeScript code for AI review
+### Export Python code for Claude/GPT review
 
 ```bash
-baic /my-project --non-interactive --categories python typescript --project-overview
+baic /my-project --non-interactive --categories python --project-overview
+```
+
+### Find all files with TODO comments
+
+```bash
+# Interactive
+baic
+# Choose option 5, enter: TODO
+
+# Or non-interactive
+baic . --non-interactive --keywords TODO
 ```
 
 ### Export specific folders
@@ -116,7 +213,7 @@ baic /my-project --non-interactive --categories python typescript --project-over
 baic . --non-interactive --paths src/components src/utils
 ```
 
-### Full export with all features
+### Full export with overview
 
 ```bash
 baic /path/to/project \
@@ -127,42 +224,34 @@ baic /path/to/project \
     --output-dir ./ai-review-bundles
 ```
 
-### Interactive mode with fancy UI
+### Stay in the tool for multiple exports
 
 ```bash
-baic . --fancy-ui
+baic
+# Export python files...
+# When asked "Do you want to export more files?" answer Y
+# Export shell scripts...
+# Answer N to exit
 ```
 
-### Use with AI assistants
+## Using with AI Assistants
 
-After running the exporter:
+1. **Run the exporter**: `baic . --categories python`
+2. **Upload bundles**: Attach `bundle_001.txt`, `bundle_002.txt`, etc.
+3. **Upload manifest**: Attach `MANIFEST.json` so AI understands file mappings
+4. **Ask away**: The AI can now reference exact file paths and line numbers
 
-1. **Attach bundles**: Upload `bundle_001.txt` (and others) to your AI assistant
-2. **Include manifest**: Upload `MANIFEST.json` so the assistant understands file mappings
-3. **Add overview**: Upload `PROJECT_OVERVIEW.txt` for architecture context
-4. **Ask questions**: The assistant can now reference exact file locations and line numbers
+Example prompt to AI:
+> "I've uploaded my Python project. Using the MANIFEST.json, find the authentication logic in src/auth.py and help me add password reset functionality."
 
-## Security
-
-By default, the following files are **skipped** to protect sensitive data:
-
-- `.env` files and variants (`*.env.*`)
-- Private keys (`*.pem`, `*.key`, `id_rsa`, `id_ed25519`)
-- Certificates (`*.crt`, `*.cer`, `*.der`)
-- Keystores (`*.jks`, `*.keystore`, `*.p12`, `*.pfx`)
-- Mobile provisioning (`*.mobileprovision`)
-- Firebase/Google config (`google-services.json`, `GoogleService-Info.plist`)
-
-Use `--include-secret-files` to override this behavior (use with caution).
-
-## CLI Options
+## CLI Reference
 
 ```
 usage: build-ai-context [-h] [--max-lines MAX_LINES] [--output-dir OUTPUT_DIR]
-                        [--non-interactive] [--categories [CATEGORIES ...]]
-                        [--paths [PATHS ...]] [--include-secret-files]
-                        [--fancy-ui] [--project-overview] [--version]
-                        [project_root]
+                       [--non-interactive] [--categories [CATEGORIES ...]]
+                       [--paths [PATHS ...]] [--keywords [KEYWORDS ...]]
+                       [--include-secret-files] [--project-overview] [--version]
+                       [project_root]
 
 positional arguments:
   project_root          Project root to scan (default: current directory)
@@ -171,18 +260,18 @@ options:
   -h, --help            Show help message
   --version             Show version
   --max-lines N         Max lines per bundle (default: 8000)
-  --output-dir DIR      Custom output directory
-  --non-interactive     Run without prompts
-  --categories CATS     Categories to export (e.g., python typescript)
-  --paths PATHS         Specific files/folders to export
+  --output-dir DIR     Custom output directory
+  --non-interactive    Run without prompts
+  --categories CATS     Categories to export
+  --paths PATHS        Files/folders to export
+  --keywords KEYWORDS   Keywords to search in file content
   --include-secret-files Include secret-like files
-  --fancy-ui            Use checkbox-style interactive UI
-  --project-overview    Generate PROJECT_OVERVIEW.txt
+  --project-overview   Generate PROJECT_OVERVIEW.txt
 ```
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions welcome! Please feel free to submit a Pull Request.
 
 ## License
 
