@@ -1,5 +1,5 @@
 """
-Secret redaction module for anything_to_text.
+Secret redaction module for build_ai_context.
 
 Automatically redacts tokens, API keys, passwords, and other secrets
 from source code before bundling.
