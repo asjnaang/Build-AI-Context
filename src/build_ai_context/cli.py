@@ -166,9 +166,13 @@ def interactive_select_files(
     if mode in {"2", "4"}:
         print("Available categories: " + ", ".join(CATEGORY_DESCRIPTIONS.keys()))
         raw = input(
-            "Enter comma-separated categories (example: python,typescript,web_ui): "
+            "Enter comma-separated categories (example: python typescript web_ui): "
         ).strip()
-        categories = exporter.parse_csv_input(raw)
+        comma_tokens = exporter.parse_csv_input(raw)
+        if comma_tokens:
+            categories = comma_tokens
+        else:
+            categories = raw.split()
         categories = exporter.normalize_categories(categories)
         metadata["selected_categories"] = categories
         if categories:
@@ -178,20 +182,23 @@ def interactive_select_files(
 
     if mode in {"3", "4"}:
         raw = input(
-            "Enter comma-separated file/folder paths or filenames (relative, absolute, or filename only): "
+            "Enter comma-separated file/folder paths or filenames (comma or space separated): "
         ).strip()
-        path_inputs = exporter.parse_csv_input(raw)
-        selected, normalized_paths, missing_paths = exporter.filter_files_by_paths(
-            selected,
-            root,
-            path_inputs,
-            interactive=True,
-            fancy=False,
-        )
-        metadata["selected_paths"] = normalized_paths
-        metadata["missing_paths"] = missing_paths
-        if missing_paths:
-            print("These paths did not match supported files: " + ", ".join(missing_paths))
+        path_inputs = exporter.parse_intelligent_input(raw, all_files, root)
+        if not path_inputs:
+            print("No valid paths entered.")
+        else:
+            selected, normalized_paths, missing_paths = exporter.filter_files_by_paths(
+                selected,
+                root,
+                path_inputs,
+                interactive=True,
+                fancy=False,
+            )
+            metadata["selected_paths"] = normalized_paths
+            metadata["missing_paths"] = missing_paths
+            if missing_paths:
+                print("These paths did not match supported files: " + ", ".join(missing_paths))
 
     if mode == "4":
         raw = input(
@@ -220,16 +227,42 @@ def interactive_select_files(
                 f"Found {len(matched_files)} file(s) containing keywords: {', '.join(matched_keywords)}"
             )
             if matched_files:
-                exporter.print_info("Matching files:")
-                for f in matched_files:
-                    exporter.print_info(f"  - {f.rel_path.as_posix()}")
-                if prompt_yes_no("Build context for these files?"):
-                    selected = matched_files
-                    metadata["name_filters"] = matched_keywords
-                    metadata["selected_paths"] = [f.rel_path.as_posix() for f in matched_files]
+                if exporter._questionary_available:
+                    from questionary import Choice
+
+                    file_choices = [
+                        Choice(
+                            title=f.rel_path.as_posix(), value=f.rel_path.as_posix(), checked=True
+                        )
+                        for f in matched_files
+                    ]
+                    selected_paths = exporter._questionary.checkbox(
+                        "All files selected. Uncheck files to exclude which you think are not necessary to bundle, then press Enter:",
+                        choices=file_choices,
+                    ).ask()
+                    if selected_paths:
+                        selected = [
+                            f for f in matched_files if f.rel_path.as_posix() in selected_paths
+                        ]
+                        metadata["name_filters"] = matched_keywords
+                        metadata["selected_paths"] = selected_paths
+                        exporter.print_info(
+                            f"Selected {len(selected)} file(s) from keyword search."
+                        )
+                    else:
+                        selected = []
+                        exporter.print_warning("No files selected.")
                 else:
-                    selected = []
-                    exporter.print_warning("No files selected.")
+                    exporter.print_info("Matching files:")
+                    for f in matched_files:
+                        exporter.print_info(f"  - {f.rel_path.as_posix()}")
+                    if prompt_yes_no("Build context for all these files?"):
+                        selected = matched_files
+                        metadata["name_filters"] = matched_keywords
+                        metadata["selected_paths"] = [f.rel_path.as_posix() for f in matched_files]
+                    else:
+                        selected = []
+                        exporter.print_warning("No files selected.")
             else:
                 exporter.print_warning("No files found matching the keywords.")
         else:
@@ -314,11 +347,12 @@ def main() -> int:
     """Main entry point for the CLI."""
     parser = build_parser()
     args = parser.parse_args()
-    return run_exporter(args, None)
+    result, _, _ = run_exporter(args, None)
+    return result
 
 
-def run_exporter(args, exporter) -> int:
-    """Run the exporter with given arguments."""
+def run_exporter(args, exporter, pre_scanned=None) -> int:
+    """Run the exporter with given arguments. pre_scanned contains (all_files, skipped_reasons) if already scanned."""
     if exporter is None:
         exporter = CodeExporter()
 
@@ -336,14 +370,19 @@ def run_exporter(args, exporter) -> int:
             return 1
 
         skip_secret_files = not args.include_secret_files
-        exporter.print_info(f"Scanning project: {root}")
 
-        all_files, skipped_reasons = exporter.scan_supported_files(root, skip_secret_files)
+        if pre_scanned is not None:
+            all_files, skipped_reasons = pre_scanned
+            exporter.print_info(f"Using pre-scanned files: {len(all_files)} file(s)")
+        else:
+            exporter.print_info(f"Scanning project: {root}")
+            all_files, skipped_reasons = exporter.scan_supported_files(root, skip_secret_files)
+
         if not all_files:
             exporter.print_warning(
                 "No supported files were found after applying .gitignore and default exclusions."
             )
-            return 0
+            return 0, None, None
 
         exporter.print_info(f"Detected {len(all_files)} supported text file(s).")
 
@@ -366,12 +405,17 @@ def run_exporter(args, exporter) -> int:
                     }
                 else:
                     exporter.print_warning("No files found matching the keywords.")
-                    return 0
+                    return 0, all_files, skipped_reasons
             else:
+                path_inputs = args.paths
+                if args.paths and len(args.paths) == 1:
+                    path_inputs = exporter.parse_intelligent_input(args.paths[0], all_files, root)
+                    if not path_inputs:
+                        path_inputs = args.paths
                 selected_files, selection_metadata = exporter.non_interactive_select_files(
                     all_files,
                     categories=args.categories,
-                    path_prefixes=args.paths,
+                    path_prefixes=path_inputs,
                     root=root,
                 )
         else:
@@ -379,7 +423,7 @@ def run_exporter(args, exporter) -> int:
 
         if not selected_files:
             exporter.print_warning("No files selected. Nothing was exported.")
-            return 0
+            return 0, all_files, skipped_reasons
 
         chunks, skipped_during_split = exporter.split_into_chunks(selected_files, args.max_lines)
         bundles, skipped_during_pack = exporter.pack_chunks(chunks, args.max_lines)
@@ -424,9 +468,41 @@ def run_exporter(args, exporter) -> int:
         if skipped_during_processing:
             import json
 
-            exporter.print_warning("Files/chunks skipped during processing:")
-            for item in skipped_during_processing:
-                exporter.print_warning("  - " + json.dumps(item, ensure_ascii=False))
+            large_files = [
+                s
+                for s in skipped_during_processing
+                if s.get("reason") == "large_file_exceeds_skip_threshold"
+            ]
+            large_warnings = [
+                s for s in skipped_during_processing if s.get("reason") == "large_file_warning"
+            ]
+            normal_skipped = [
+                s
+                for s in skipped_during_processing
+                if s.get("reason")
+                not in ["large_file_exceeds_skip_threshold", "large_file_warning"]
+            ]
+
+            if large_files:
+                exporter.print_warning(
+                    f"\nLarge files ({'>=' + str(3000)} lines) SKIPPED (handle separately):"
+                )
+                for item in large_files:
+                    exporter.print_warning(
+                        f"  [red]- {item['path']}[/red] ({item['line_count']} lines)"
+                    )
+
+            if large_warnings:
+                exporter.print_warning(
+                    f"\nLarge files ({'>=' + str(1500)} lines) that may need cleanup:"
+                )
+                for item in large_warnings:
+                    exporter.print_warning(f"  - {item['path']} ({item['line_count']} lines)")
+
+            if normal_skipped:
+                exporter.print_warning("\nFiles/chunks skipped during processing:")
+                for item in normal_skipped:
+                    exporter.print_warning("  - " + json.dumps(item, ensure_ascii=False))
 
         missing_paths = selection_metadata.get("missing_paths", [])
         if missing_paths:
@@ -434,14 +510,14 @@ def run_exporter(args, exporter) -> int:
             for value in missing_paths:
                 exporter.print_warning(f"  - {value}")
 
-        return 0
+        return 0, all_files, skipped_reasons
 
     except KeyboardInterrupt:
         print("\nInterrupted by user.", file=sys.stderr)
-        return 130
+        return 130, None, None
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
-        return 1
+        return 1, None, None
 
 
 def interactive_main() -> int:
@@ -450,8 +526,10 @@ def interactive_main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
+    pre_scanned = None
+
     while True:
-        result = run_exporter(args, exporter)
+        result, all_files, skipped_reasons = run_exporter(args, exporter, pre_scanned)
 
         if result != 0:
             return result
@@ -459,11 +537,14 @@ def interactive_main() -> int:
         if args.non_interactive:
             return 0
 
+        if all_files:
+            pre_scanned = (all_files, skipped_reasons)
+
         user_input = input("Do you want to export more files? [Y/n]: ")
 
         if user_input.strip().lower() in ("", "y", "yes"):
             print("\n" + "=" * 50)
-            print("Starting new export...")
+            print("Starting new export (using cached scan)...")
             print("=" * 50 + "\n")
         else:
             print("\nGoodbye!")
