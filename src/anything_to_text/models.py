@@ -2,9 +2,11 @@
 Data models for anything_to_text package.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 
 @dataclass(frozen=True)
@@ -45,7 +47,7 @@ class ExportConfig:
 
     project_root: Path
     max_lines: int = 8000
-    output_dir: Path | None = None
+    output_dir: Optional[Path] = None
     include_secret_files: bool = False
     categories: List[str] = field(default_factory=list)
     paths: List[str] = field(default_factory=list)
@@ -61,7 +63,7 @@ class ExportResult:
 
     output_dir: Path
     manifest_path: Path
-    overview_path: Path | None
+    overview_path: Optional[Path]
     bundles_created: int
     files_exported: int
     skipped_items: List[dict] = field(default_factory=list)
