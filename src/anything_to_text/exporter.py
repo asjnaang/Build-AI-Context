@@ -28,6 +28,7 @@ from anything_to_text.constants import (
     SPECIAL_FILENAMES,
 )
 from anything_to_text.models import ExportConfig, ExportResult, FileChunk, SourceFile
+from anything_to_text.redact import redact_text
 
 
 class CodeExporter:
@@ -431,9 +432,13 @@ class CodeExporter:
         )
 
     def render_chunk_block(self, chunk: FileChunk) -> str:
-        """Render a complete chunk block with header and footer."""
+        """Render a complete chunk block with header and footer.
+        
+        All lines are passed through redaction to remove secrets/tokens.
+        """
         parts: List[str] = [self.bundle_header(chunk)]
-        parts.extend(line + "\n" for line in chunk.lines)
+        for line in chunk.lines:
+            parts.append(redact_text(line) + "\n")
         parts.append(self.bundle_footer(chunk))
         return "".join(parts)
 
