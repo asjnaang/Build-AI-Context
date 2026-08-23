@@ -24,6 +24,7 @@ from build_ai_context.constants import (
     DEFAULT_OUTPUT_DIR,
     DEFAULT_SECRET_PATTERNS,
     DEFAULT_TEXT_ENCODING,
+    EXTRA_EXCLUDED_PATTERNS,
     INTERESTING_FILES,
     SPECIAL_FILENAMES,
 )
@@ -138,6 +139,8 @@ class CodeExporter:
             return True, "default_excluded_dir"
         if gitignore_spec.match_file(rel_str):
             return True, ".gitignore"
+        if cls.path_matches_any_pattern(rel_str, EXTRA_EXCLUDED_PATTERNS):
+            return True, "extra_excluded_pattern"
         if skip_secret_files and cls.path_matches_any_pattern(rel_str, DEFAULT_SECRET_PATTERNS):
             return True, "secret_like_file"
         return False, ""
@@ -366,6 +369,26 @@ class CodeExporter:
                 normalized.append(value)
         return normalized
 
+    def filter_files_by_keywords(
+        self, files: Sequence[SourceFile], keywords: Sequence[str]
+    ) -> Tuple[List[SourceFile], List[str]]:
+        """Filter files by keywords found in their content."""
+        matched: List[SourceFile] = []
+        matched_keywords: List[str] = []
+        keywords_lower = [k.lower() for k in keywords]
+
+        for item in files:
+            content_lower = "\n".join(item.lines).lower()
+            found_keywords = [kw for kw in keywords_lower if kw in content_lower]
+            if found_keywords:
+                matched.append(item)
+                for kw in found_keywords:
+                    if kw not in matched_keywords:
+                        matched_keywords.append(kw)
+
+        matched.sort(key=lambda item: item.rel_path.as_posix())
+        return matched, sorted(matched_keywords)
+
     def non_interactive_select_files(
         self,
         all_files: Sequence[SourceFile],
@@ -433,7 +456,7 @@ class CodeExporter:
 
     def render_chunk_block(self, chunk: FileChunk) -> str:
         """Render a complete chunk block with header and footer.
-        
+
         All lines are passed through redaction to remove secrets/tokens.
         """
         parts: List[str] = [self.bundle_header(chunk)]
@@ -602,6 +625,7 @@ class CodeExporter:
             "bundle_count": len(bundles),
             "skip_secret_like_files": skip_secret_files,
             "selection": selection_metadata,
+            "selected_files": [item.rel_path.as_posix() for item in selected_files],
             "summary": {
                 "selected_file_count": len(selected_files),
                 "selected_total_lines": sum(item.line_count for item in selected_files),
