@@ -20,6 +20,7 @@ from build_ai_context.constants import (
     CATEGORY_DESCRIPTIONS,
     CATEGORY_EXTENSIONS,
     DEFAULT_EXCLUDED_DIRS,
+    DEFAULT_EXCLUDED_PREFIXES,
     DEFAULT_MAX_LINES,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_SECRET_PATTERNS,
@@ -130,6 +131,12 @@ class CodeExporter:
         return any(part in DEFAULT_EXCLUDED_DIRS for part in rel_path.parts)
 
     @classmethod
+    def should_skip_by_prefix(cls, rel_path: Path) -> bool:
+        """Check if a path should be skipped based on directory prefix."""
+        rel_str = rel_path.as_posix()
+        return any(rel_str.startswith(prefix) for prefix in DEFAULT_EXCLUDED_PREFIXES)
+
+    @classmethod
     def is_ignored(
         cls, rel_path: Path, gitignore_spec: pathspec.PathSpec, skip_secret_files: bool
     ) -> Tuple[bool, str]:
@@ -137,6 +144,8 @@ class CodeExporter:
         rel_str = rel_path.as_posix()
         if cls.should_skip_by_dir(rel_path):
             return True, "default_excluded_dir"
+        if cls.should_skip_by_prefix(rel_path):
+            return True, "default_excluded_prefix"
         if gitignore_spec.match_file(rel_str):
             return True, ".gitignore"
         if cls.path_matches_any_pattern(rel_str, EXTRA_EXCLUDED_PATTERNS):
