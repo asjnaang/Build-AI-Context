@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "anything-to-text"
-version = "0.3.2"
+dynamic = ["version"]
 description = "Export source code and project files into AI-friendly text bundles with manifest"
 readme = "README.md"
 license = "MIT"
@@ -57,6 +57,9 @@ Homepage = "https://github.com/asjnaang/anything-to-text"
 Documentation = "https://github.com/asjnaang/anything-to-text#readme"
 Repository = "https://github.com/asjnaang/anything-to-text"
 Issues = "https://github.com/asjnaang/anything-to-text/issues"
+
+[tool.hatch.version]
+path = "src/anything_to_text/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/anything_to_text"]
