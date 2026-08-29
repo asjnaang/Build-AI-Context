@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "build-ai-context"
-version = "1.0.4"
+version = "1.0.6"
 description = "Export source code and project files into AI-friendly text bundles with manifest"
 readme = "README.md"
 license = "MIT"
