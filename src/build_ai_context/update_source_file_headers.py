@@ -88,7 +88,7 @@ DEFAULT_EXCLUDES = {
     ".vscode",
 }
 
-SUPPORTED_EXTENSIONS = {".py", ".ts", ".tsx", ".js", ".jsx", ".html", ".htm"}
+SUPPORTED_EXTENSIONS = {".py", ".ts", ".tsx", ".js", ".jsx", ".kt", ".kts", ".java", ".swift", ".html", ".htm"}
 SKIPPED_EXTENSIONS = {".json"}
 SCAN_LIMIT_LINES = 120
 MAX_HEADER_BLOCK_LINES = 20
@@ -198,7 +198,7 @@ def detect_insert_at(path: Path, lines: list[str]) -> int:
             insert_at = max(insert_at, enc_idx + 1)
         return insert_at
 
-    if ext in {".js", ".jsx", ".ts", ".tsx"}:
+    if ext in {".js", ".jsx", ".ts", ".tsx", ".kt", ".kts", ".java", ".swift"}:
         return 1 if lines and lines[0].startswith("#!") else 0
 
     if ext in {".html", ".htm"}:
@@ -226,7 +226,7 @@ def build_header(path: Path, relative_posix: str, repo_name: str, newline: str) 
             newline,
         ]
 
-    if ext in {".js", ".jsx", ".ts", ".tsx"}:
+    if ext in {".js", ".jsx", ".ts", ".tsx", ".kt", ".kts", ".java", ".swift"}:
         return [
             f"{C_HEADER_START}{newline}",
             f" * path: {relative_posix}{newline}",
