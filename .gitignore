@@ -48,3 +48,7 @@ tools/
 .claude
 claude.md
 uv.lock
+
+# Ignore filetree files (all timestamps)
+*_file_tree_*.txt
+
