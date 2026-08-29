@@ -175,18 +175,37 @@ def render_selection_modes(exporter: CodeExporter) -> None:
     print("─" * 75)
 
 
-def _display_files_for_deselection(files: Sequence[SourceFile]) -> Tuple[List[SourceFile], bool]:
-    """Display selected files and let the user toggle them on/off.
+def _confirm_file_selection(
+    files: Sequence[SourceFile],
+    exporter: CodeExporter,
+) -> Tuple[List[SourceFile], bool]:
+    """Let the user confirm/refine file selection via checkbox or numbered list.
 
-    Returns the (potentially modified) file list and True if the user
-    confirmed the selection, False to cancel.
+    When questionary is available: interactive checkbox (same as keyword mode).
+    Fallback: numbered list with toggle by number.
+    Returns (selected_files, confirmed).
     """
     if not files:
         return list(files), True
 
-    # Build a dict of index -> file for toggling
-    indexed: List[SourceFile] = list(files)
+    file_list = list(files)
 
+    # Use questionary checkbox when available (keyword-mode style)
+    if exporter._questionary_available:
+        choices = [
+            exporter._questionary.Choice(title=str(f.rel_path), value=f, checked=True)
+            for f in file_list
+        ]
+        selected = exporter._questionary.checkbox(
+            "Select files to include (deselect any that are unnecessary):",
+            choices=choices,
+        ).ask()
+        if selected is None:
+            return [], False
+        return selected, True
+
+    # Fallback: numbered list with toggle
+    indexed = list(file_list)
     while True:
         print(f"\nCurrently selected ({len(indexed)} file(s)):")
         for i, f in enumerate(indexed, 1):
@@ -197,29 +216,18 @@ def _display_files_for_deselection(files: Sequence[SourceFile]) -> Tuple[List[So
         raw = input("  > ").strip().lower()
 
         if raw == "c" or raw == "":
-            # Confirm
             return indexed, True
         if raw == "q":
-            # Cancel
             return [], False
         if raw == "a":
-            # Toggle all: if all are currently "selected" (in list), remove all;
-            # otherwise add all back.  Since we only have selected files here,
-            # "toggle all" means deselect all (empty list). If the list is already
-            # empty, restore from the full set.  We track the "full set" via the
-            # original all_files, but we don't have it here.  So for simplicity,
-            # toggle all means: if every item is present, clear; otherwise keep
-            # (toggle is a no-op for partial).
-            # A more intuitive approach: just clear the list to allow re-selection.
             indexed.clear()
-            print("All files deselected. You can type 'c' to confirm (empty) or add files back by number.")
+            print("All files deselected. Type 'c' to confirm or add files back by number.")
             continue
         if raw == "d":
             indexed.clear()
             print("All files deselected.")
             continue
 
-        # Parse comma/space-separated numbers
         parts = [p.strip() for p in raw.replace(",", " ").split() if p.strip()]
         toggled = False
         for part in parts:
@@ -227,7 +235,6 @@ def _display_files_for_deselection(files: Sequence[SourceFile]) -> Tuple[List[So
                 continue
             idx = int(part)
             if 1 <= idx <= len(indexed):
-                # Toggle: remove the file at this index
                 toggled = True
                 removed = indexed.pop(idx - 1)
                 print(f"  Toggled off: {removed.rel_path.as_posix()}")
@@ -266,7 +273,7 @@ def interactive_select_files(
             selection_mode="category",
             selected_categories=categories,
         )
-        selected, confirmed = _display_files_for_deselection(selected)
+        selected, confirmed = _confirm_file_selection(selected, exporter)
         if not confirmed:
             return [], metadata
 
@@ -280,7 +287,7 @@ def interactive_select_files(
             selected_paths=path_prefixes,
             missing_paths=list(missing),
         )
-        selected, confirmed = _display_files_for_deselection(selected)
+        selected, confirmed = _confirm_file_selection(selected, exporter)
         if not confirmed:
             return [], metadata
 
@@ -321,7 +328,7 @@ def interactive_select_files(
             selected_paths=path_prefixes,
             name_filters=name_filters,
         )
-        selected, confirmed = _display_files_for_deselection(selected)
+        selected, confirmed = _confirm_file_selection(selected, exporter)
         if not confirmed:
             return [], metadata
 
@@ -337,7 +344,7 @@ def interactive_select_files(
                         for f in matched
                     ]
                     selected = exporter._questionary.checkbox(
-                        "Select files to include:", choices=choices
+                        "Selected list of files(You can deselect if any files are unecessary):", choices=choices
                     ).ask()
                     if selected is None:
                         selected = []
@@ -350,7 +357,7 @@ def interactive_select_files(
                     print(f"\nFound {len(matched)} files containing {found}")
                     for f in matched:
                         print(f"  {f.rel_path.as_posix()}")
-                    selected, confirmed = _display_files_for_deselection(matched)
+                    selected, confirmed = _confirm_file_selection(matched, exporter)
                     if not confirmed:
                         selected = []
                     elif selected:
