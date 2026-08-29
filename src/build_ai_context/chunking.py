@@ -5,10 +5,9 @@ Chunking and bundling logic for build_ai_context.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from build_ai_context.constants import (
-    DEFAULT_MAX_LINES,
     LARGE_FILE_SKIP_LINES,
     LARGE_FILE_WARN_LINES,
 )
@@ -73,15 +72,28 @@ def split_into_chunks(
     files: Sequence[SourceFile],
     max_lines: int,
     redact: bool = False,
+    max_file_lines: Optional[int] = None,
 ) -> Tuple[List[FileChunk], List[Dict[str, object]]]:
     """
-    Split files into chunks respecting max_lines.
+    Split repo source files into chunks for packing.
+
+    max_lines:
+      Max lines for a chunk/block within a bundle (typically DEFAULT_MAX_LINES=8000).
+      This is the output-bundle capacity used for splitting large included files.
+    max_file_lines:
+      Max lines allowed for a *source* file before it is skipped entirely:
+        - None  → use LARGE_FILE_SKIP_LINES (default 3000)
+        - 0     → never skip a file for size (still split across 8000-line bundles)
+        - N > 0 → skip files with >= N lines
 
     Returns (chunks, skipped_files).
     """
     chunks: List[FileChunk] = []
     skipped: List[Dict[str, object]] = []
     overhead = chunk_overhead_lines(redact)
+    skip_threshold = (
+        LARGE_FILE_SKIP_LINES if max_file_lines is None else max_file_lines
+    )
 
     for source in files:
         lines = source.lines
@@ -89,19 +101,19 @@ def split_into_chunks(
         if total_lines == 0:
             continue
 
-        # Check if file exceeds skip threshold
-        if total_lines >= LARGE_FILE_SKIP_LINES:
+        # Check if file exceeds skip threshold (0 = disabled / unlimited)
+        if skip_threshold > 0 and total_lines >= skip_threshold:
             skipped.append(
                 {
                     "path": source.rel_path.as_posix(),
                     "reason": "large_file_exceeds_skip_threshold",
                     "line_count": total_lines,
-                    "threshold": LARGE_FILE_SKIP_LINES,
+                    "threshold": skip_threshold,
                 }
             )
             continue
 
-        # Warn for large files (1500-2999 lines)
+        # Warn for large files that are still included
         if total_lines >= LARGE_FILE_WARN_LINES:
             skipped.append(
                 {

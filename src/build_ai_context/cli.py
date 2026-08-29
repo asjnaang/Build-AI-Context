@@ -20,6 +20,7 @@ from build_ai_context.cli_ui import (
 from build_ai_context.constants import (
     CATEGORY_DESCRIPTIONS,
     DEFAULT_MAX_LINES,
+    LARGE_FILE_SKIP_LINES,
     extract_timestamp_from_dir_name,
     generate_timestamp,
 )
@@ -41,11 +42,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=".",
         help="Project root to scan. Defaults to the current working directory.",
     )
+    # Bundle packing size is fixed at DEFAULT_MAX_LINES (8000). Only the per-source
+    # file inclusion threshold is CLI-overridable.
     parser.add_argument(
-        "--max-lines",
+        "--max-file-lines",
         type=int,
-        default=DEFAULT_MAX_LINES,
-        help=f"Maximum rendered lines per output bundle (default: {DEFAULT_MAX_LINES}).",
+        default=LARGE_FILE_SKIP_LINES,
+        metavar="N",
+        help=(
+            f"Skip individual repo source files with >= N lines when bundling "
+            f"(default: {LARGE_FILE_SKIP_LINES}). Use 0 to include any size "
+            f"(large files are still split across fixed {DEFAULT_MAX_LINES}-line bundles)."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -192,14 +200,17 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         root = Path(args.project_root).expanduser().resolve()
         if not root.exists():
             print(f"Error: Project root does not exist: {root}", file=sys.stderr)
-            return 1
+            return 1, None, None
         if not root.is_dir():
             print(f"Error: Project root is not a directory: {root}", file=sys.stderr)
-            return 1
+            return 1, None, None
 
-        if args.max_lines <= 0:
-            print("Error: --max-lines must be greater than zero", file=sys.stderr)
-            return 1
+        if args.max_file_lines < 0:
+            print("Error: --max-file-lines must be >= 0 (0 = unlimited)", file=sys.stderr)
+            return 1, None, None
+
+        # Output bundle size is intentionally fixed; only source-file limit is overridable.
+        bundle_max_lines = DEFAULT_MAX_LINES
 
         skip_secret_files = not args.include_secret_files
 
@@ -264,8 +275,12 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             f"Selected {len(selected_files)} file(s) out of {len(all_files)} supported file(s)."
         )
 
-        chunks, skipped_during_split = exporter.split_into_chunks(selected_files, args.max_lines)
-        bundles, skipped_during_pack = exporter.pack_chunks(chunks, args.max_lines)
+        chunks, skipped_during_split = exporter.split_into_chunks(
+            selected_files,
+            bundle_max_lines,
+            max_file_lines=args.max_file_lines,
+        )
+        bundles, skipped_during_pack = exporter.pack_chunks(chunks, bundle_max_lines)
         skipped_during_processing = skipped_during_split + skipped_during_pack
 
         output_dir = (
@@ -290,7 +305,8 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             selected_files=selected_files,
             bundles=bundles,
             output_dir=output_dir,
-            max_lines=args.max_lines,
+            max_lines=bundle_max_lines,
+            max_file_lines=args.max_file_lines,
             skipped_reasons=skipped_reasons,
             selection_metadata=selection_metadata,
             skip_secret_files=skip_secret_files,
