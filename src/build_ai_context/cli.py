@@ -326,9 +326,10 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
 
         if not args.non_interactive and not args.non_interactive:
             print(
-                f"\n📝 Edit 'prompt.md' in the output directory — replace the <task_contract> "
-                f"section with your specific task or question, then upload all bundle files "
-                f"along with your prompt.md to your AI assistant for best results."
+                f"\n📝 Open 'prompt.md' in the output directory and replace the task description "
+                f"(under ## Task Contract) with your specific feature request or question or changes needed.\n"
+                f"Then upload all bundle files along with prompt.md and ask your AI assistant address the promt.md "
+                f"for best results.\n\n"
             )
 
         return 0, all_files, skipped_reasons

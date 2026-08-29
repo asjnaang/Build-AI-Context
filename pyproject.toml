@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "build-ai-context"
-version = "1.0.6"
+version = "1.0.7"
 description = "Export source code and project files into AI-friendly text bundles with manifest"
 readme = "README.md"
 license = "MIT"
@@ -60,6 +60,9 @@ Issues = "https://github.com/asjnaang/build-ai-context/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/build_ai_context"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/build_ai_context/prompt.md" = "build_ai_context/prompt.md"
 
 [tool.ruff]
 target-version = "py39"
