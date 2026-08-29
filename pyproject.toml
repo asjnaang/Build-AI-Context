@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "build-ai-context"
-version = "1.0.3"
+version = "1.0.4"
 description = "Export source code and project files into AI-friendly text bundles with manifest"
 readme = "README.md"
 license = "MIT"
@@ -79,3 +79,8 @@ select = [
 python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+]

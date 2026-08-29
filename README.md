@@ -94,6 +94,7 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | Option | Description | Example |
 |--------|-------------|---------|
 | `project_root` | Directory to scan (default: current) | `baic /path/to/project` |
+| `--tree` | Generate filetree only, exit | `baic --tree .` |
 | `--categories` | Export by category | `--categories python typescript` |
 | `--paths` | Export by path/filename | `--paths src tests` |
 | `--keywords` | Search in code content | `--keywords TODO FIXME` |
@@ -102,6 +103,7 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `--output-dir` | Custom output folder | `--output-dir ./my-bundles` |
 | `--project-overview` | Generate architecture overview | `--project-overview` |
 | `--include-secret-files` | Include .env, keys, etc. (careful!) | `--include-secret-files` |
+| `--redact` | Redact secrets from output | `--redact` |
 | `--version` | Show version | `--version` |
 
 ## Categories Supported
@@ -128,9 +130,10 @@ After running, you'll get:
 
 | File | Description |
 |------|-------------|
-| `bundle_001_<project>.txt`, `bundle_002_<project>.txt`, ... | Text bundles (named with project folder) |
-| `MANIFEST.json` | Maps every file to its bundle and line numbers |
-| `README_EXPORT.txt` | Quick summary of what was exported |
+| `<project>_bundle_001_<timestamp>.txt`, ... | Text bundles with consistent timestamps |
+| `<project>_manifest_<timestamp>.json` | Maps every file to its bundle and line numbers |
+| `<project>_readme_<timestamp>.txt` | Quick summary of what was exported |
+| `<project>_file_tree_<timestamp>.txt` | Filetree with icons and type summary |
 | `PROJECT_OVERVIEW.txt` | (with `--project-overview`) Architecture overview |
 
 ### Bundle Format
@@ -177,6 +180,52 @@ def authenticate(user):
   ]
 }
 ```
+
+## Filetree Feature
+
+Generate a visual filetree with file type icons and summary statistics:
+
+```bash
+# Generate filetree only (quick project overview)
+baic --tree .
+baic --tree /path/to/project
+
+# Filetree is automatically included in exports
+baic . --non-interactive
+```
+
+Example filetree output:
+```
+myproject/
+├── 🐍 main.py
+├── 📕 README.md
+├── src/
+│   ├── 🟪 app.kt
+│   └── 📄 config.xml
+...
+
+📊 File Summary:
+  🟪 Kotlin       × 15
+  📕 Markdown     × 3
+  🐍 Python       × 2
+  📄 XML          × 1
+  ───
+  📁  Total: 21 files
+```
+
+## Redaction
+
+By default, redaction is **disabled** to preserve code integrity. Enable it when sharing with external parties:
+
+```bash
+# Without redaction (default) - code stays intact
+baic . --non-interactive
+
+# With redaction - secrets are replaced with <REDACTED>
+baic . --non-interactive --redact
+```
+
+Redaction targets: API keys, tokens, passwords, JWTs, AWS keys, GitHub tokens, etc.
 
 ## What Gets Excluded
 
@@ -260,7 +309,8 @@ Example prompt to AI:
 usage: build-ai-context [-h] [--max-lines MAX_LINES] [--output-dir OUTPUT_DIR]
                        [--non-interactive] [--categories [CATEGORIES ...]]
                        [--paths [PATHS ...]] [--keywords [KEYWORDS ...]]
-                       [--include-secret-files] [--project-overview] [--version]
+                       [--include-secret-files] [--project-overview]
+                       [--tree] [--redact] [--version]
                        [project_root]
 
 positional arguments:
@@ -269,14 +319,16 @@ positional arguments:
 options:
   -h, --help            Show help message
   --version             Show version
+  --tree                Generate filetree only and exit
+  --redact              Redact secrets from output (default: disabled)
   --max-lines N         Max lines per bundle (default: 8000)
-  --output-dir DIR     Custom output directory
-  --non-interactive    Run without prompts
+  --output-dir DIR      Custom output directory
+  --non-interactive     Run without prompts
   --categories CATS     Categories to export
-  --paths PATHS        Files/folders to export
+  --paths PATHS         Files/folders to export
   --keywords KEYWORDS   Keywords to search in file content
   --include-secret-files Include secret-like files
-  --project-overview   Generate PROJECT_OVERVIEW.txt
+  --project-overview    Generate PROJECT_OVERVIEW.txt
 ```
 
 ## Contributing
