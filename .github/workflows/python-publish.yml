@@ -27,10 +27,13 @@ jobs:
           python-version: "3.x"
 
       - name: Build release distributions
-        run: |
+        run: pip install build twine
           # NOTE: put your own distribution build steps here.
-          python -m pip install build
-          python -m build
+          # python -m pip install build
+          # python -m build
+      
+      - name: Build package
+        run: python -m build
 
       - name: Upload distributions
         uses: actions/upload-artifact@v4
@@ -51,7 +54,7 @@ jobs:
     environment:
       name: pypi
       # OPTIONAL: uncomment and update to include your PyPI project URL in the deployment status:
-      # url: https://pypi.org/p/YOURPROJECT
+      url: https://pypi.org/project/build-ai-context/
       #
       # ALTERNATIVE: if your GitHub Release name is the PyPI project version string
       # ALTERNATIVE: exactly, uncomment the following line instead:
