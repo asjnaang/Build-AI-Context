@@ -206,6 +206,7 @@ def write_bundles_and_manifest(
     filetree_content: Optional[str] = None,
     timestamp: Optional[str] = None,
     redact: bool = False,
+    max_file_lines: Optional[int] = None,
 ) -> Path:
     """Write bundles and manifest to the output directory."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -219,6 +220,7 @@ def write_bundles_and_manifest(
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "project_root": str(root),
         "max_lines_per_bundle": max_lines,
+        "max_file_lines": max_file_lines,
         "bundle_count": len(bundles),
         "skip_secret_like_files": skip_secret_files,
         "selection": selection_metadata,
