@@ -283,10 +283,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         filetree_content = exporter.generate_filetree(all_files, root)
         folder_name = root.name.replace(" ", "_")
         filetree_name = f"{folder_name}_file_tree_{timestamp}.txt"
-        filetree_path = output_dir / filetree_name
-        filetree_path.write_text(filetree_content, encoding="utf-8")
         exporter.update_gitignore(root, filetree_name)
-        exporter.print_success(f"Filetree created  : {filetree_path}")
 
         manifest_path = exporter.write_bundles_and_manifest(
             root=root,
@@ -299,6 +296,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             skip_secret_files=skip_secret_files,
             skipped_during_pack=skipped_during_processing,
             filetree_name=filetree_name,
+            filetree_content=filetree_content,
             timestamp=timestamp,
         )
 
@@ -318,7 +316,6 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         exporter.print_success(f"Manifest         : {manifest_path}")
         if overview_path is not None:
             exporter.print_success(f"Project overview : {overview_path}")
-        exporter.print_success(f"Filetree         : {filetree_path}")
         exporter.print_success(f"Bundles created  : {len(bundles)}")
         exporter.print_success(f"Files exported   : {len(selected_files)}")
 
@@ -329,13 +326,9 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
 
         if not args.non_interactive and not args.non_interactive:
             print(
-                f"\nTip: Upload the bundle(s) and {manifest_path.name} to your AI "
-                "assistant for best results."
-            )
-            print(
-                f"\n💡 Edit 'prompt.md' in the output directory to add your task or question "
-                f"(replace the <tasks_contract> section). The prompt is automatically "
-                f"included in every bundle to guide the AI."
+                f"\n📝 Edit 'prompt.md' in the output directory — replace the <task_contract> "
+                f"section with your specific task or question, then upload all bundle files "
+                f"along with your prompt.md to your AI assistant for best results."
             )
 
         return 0, all_files, skipped_reasons
