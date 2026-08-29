@@ -17,9 +17,7 @@ REDACTION_MARK = "<REDACTED>"
 # ---------------------------------------------------------------------------
 
 # JWT tokens (three base64 segments)
-_RE_JWT = re.compile(
-    r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"
-)
+_RE_JWT = re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b")
 
 # Authorization: Bearer <token>
 _RE_BEARER = re.compile(
@@ -43,16 +41,17 @@ _RE_JSON_SECRET = re.compile(
     r'\s*:\s*)"[^"]*"',
 )
 
-# YAML-style secrets
+# YAML-style secrets - only match clearly secret-related keys, not bare "key"
 _RE_YAML_SECRET = re.compile(
-    r'(?i)(api[_-]?key|token|secret|password|client[_-]?secret|access[_-]?token|'
-    r'refresh[_-]?token|bearer|auth_token|private[_-]?key|credentials)'
-    r'\s*:\s*(\S+)',
+    r"(?i)(api[_-]?key|token|secret|password|client[_-]?secret|access[_-]?token|"
+    r"refresh[_-]?token|bearer|auth_token|private[_-]?key|credentials|"
+    r"secret[_-]?key|signing[_-]?key)"
+    r"\s*:\s*(\S+)",
 )
 
-# URL query params with secrets
+# URL query params with secrets - only match clearly secret params, not bare "key="
 _RE_URL_SECRET = re.compile(
-    r"(?i)\b((?:token|access_token|refresh_token|api_key|apikey|key|secret|"
+    r"(?i)\b((?:token|access_token|refresh_token|api_key|apikey|secret|"
     r"sig|signature|auth|bearer|password|passwd|pwd)=)([^&\s\"]+)",
 )
 
@@ -63,13 +62,16 @@ _RE_PRIVATE_KEY_BLOCK = re.compile(
 )
 
 # ENV-style secrets (UPPERCASE keys only to avoid false positives)
-# Matches keys ending with secret-indicating words
+# Only matches variables with clear secret indicators - NOT just any "KEY" suffix
+# Pattern requires the variable name to START with a known secret indicator
 _RE_ENV_SECRET = re.compile(
     r"(?m)^\s*(?:export\s+)?"
-    r"(?P<key>[A-Z][A-Z0-9_]*"
-    r"(?:TOKEN|API_KEY|SECRET|PASSWORD|PASS|ACCESS_KEY|PRIVATE_KEY|CLIENT_SECRET|"
-    r"AUTH|BEARER|CREDENTIALS|KEY|CREDENTIALS|SIGNING|CLIENT_ID|APIPASSWORD)"
-    r"[A-Z0-9_]*)"
+    r"(?P<key>"
+    r"(?:SECRET_KEY|API_KEY|PRIVATE_KEY|SIGNING_KEY|CLIENT_SECRET|API_SECRET|"
+    r"ACCESS_KEY|AUTH_TOKEN|BEARER_TOKEN|CREDENTIALS|TOKEN|PASSWORD|PASS|"
+    r"SIGNING_SECRET|API_PASSWORD|CLIENT_KEY)"
+    r"[A-Z0-9_]*"
+    r")"
     r"\s*=\s*(?P<val>.*)$",
 )
 
@@ -78,20 +80,16 @@ _RE_BASE64_SECRET = re.compile(
     r'(?i)((?:secret|private|signing)[_-]?key(?:_[a-z]+)?)\s*=\s*[\'"]([A-Za-z0-9+/]{20,}={0,2})[\'"]',
 )
 
-# Generic hex token assignments (32+ hex chars)
+# Generic hex token assignments (32+ hex chars) - require secret-related prefix
 _RE_HEX_TOKEN = re.compile(
-    r'(?i)((?:secret|token|key|password|auth)[_-]?(?:key|value|hash)?)\s*=\s*[\'"]([0-9a-f]{32,})[\'"]',
+    r'(?i)((?:secret|token|password|auth)[_-]?(?:key|value|hash|secret)?)\s*=\s*[\'"]([0-9a-f]{32,})[\'"]',
 )
 
 # AWS-style keys
-_RE_AWS_KEY = re.compile(
-    r"(AKIA[0-9A-Z]{16})"
-)
+_RE_AWS_KEY = re.compile(r"(AKIA[0-9A-Z]{16})")
 
 # GitHub tokens
-_RE_GITHUB_TOKEN = re.compile(
-    r"(gh[pousr]_[A-Za-z0-9_]{36,251})"
-)
+_RE_GITHUB_TOKEN = re.compile(r"(gh[pousr]_[A-Za-z0-9_]{36,251})")
 
 # Slack tokens
 _RE_SLACK_TOKEN = re.compile(
@@ -99,19 +97,13 @@ _RE_SLACK_TOKEN = re.compile(
 )
 
 # Google API key
-_RE_GOOGLE_API_KEY = re.compile(
-    r"(AIza[0-9A-Za-z\-_]{35})"
-)
+_RE_GOOGLE_API_KEY = re.compile(r"(AIza[0-9A-Za-z\-_]{35})")
 
 # Stripe keys
-_RE_STRIPE_KEY = re.compile(
-    r"(sk_live_[0-9a-zA-Z]{24,})"
-)
+_RE_STRIPE_KEY = re.compile(r"(sk_live_[0-9a-zA-Z]{24,})")
 
 # Twilio API keys
-_RE_TWILIO_KEY = re.compile(
-    r"(SK[0-9a-fA-F]{32})"
-)
+_RE_TWILIO_KEY = re.compile(r"(SK[0-9a-fA-F]{32})")
 
 
 def redact_text(text: str) -> str:
@@ -132,7 +124,7 @@ def redact_text(text: str) -> str:
 
     # Authorization headers
     text = _RE_BEARER.sub(rf"\1{REDACTION_MARK}", text)
-    text = _RE_BEARER_JSON.sub(rf'\1Bearer {REDACTION_MARK}\2', text)
+    text = _RE_BEARER_JSON.sub(rf"\1Bearer {REDACTION_MARK}\2", text)
 
     # API key headers
     text = _RE_API_KEY_HEADER.sub(rf"\1{REDACTION_MARK}", text)
@@ -158,6 +150,7 @@ def redact_text(text: str) -> str:
         if not val or val in ('""', "''", "null", "~"):
             return m.group(0)
         return f"{key}: {REDACTION_MARK}"
+
     text = _RE_YAML_SECRET.sub(_redact_yaml, text)
 
     # URL query secrets
