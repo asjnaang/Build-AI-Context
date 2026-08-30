@@ -27,6 +27,55 @@ def prompt_yes_no(message: str, default: bool = True) -> bool:
     return raw in {"y", "yes"}
 
 
+def select_oversized_files_for_inclusion(
+    files: Sequence[SourceFile],
+    skipped_items: Sequence[Dict[str, object]],
+    exporter: CodeExporter,
+) -> List[SourceFile]:
+    """Let interactive users explicitly include files above the line limit."""
+    oversized_paths = {
+        str(item["path"])
+        for item in skipped_items
+        if item.get("reason") == "large_file_exceeds_skip_threshold"
+    }
+    oversized_files = [
+        source for source in files if source.rel_path.as_posix() in oversized_paths
+    ]
+    if not oversized_files:
+        return []
+
+    print("\nThe following files exceed --max-file-lines and will be excluded:")
+    for index, source in enumerate(oversized_files, 1):
+        print(f"  {index}. {source.rel_path.as_posix()} ({source.line_count} lines)")
+
+    if exporter._questionary_available:
+        choices = [
+            exporter._questionary.Choice(
+                title=f"{source.rel_path.as_posix()} ({source.line_count} lines)",
+                value=source,
+                checked=False,
+            )
+            for source in oversized_files
+        ]
+        selected = exporter._questionary.checkbox(
+            "Select files to include anyway (Enter keeps all excluded):",
+            choices=choices,
+        ).ask()
+        return list(selected or [])
+
+    print("Enter numbers to include, separated by commas or spaces.")
+    raw = input("Press Enter to keep all excluded: ").strip()
+    if not raw:
+        return []
+    selected: List[SourceFile] = []
+    for token in raw.replace(",", " ").split():
+        if token.isdigit() and 1 <= int(token) <= len(oversized_files):
+            source = oversized_files[int(token) - 1]
+            if source not in selected:
+                selected.append(source)
+    return selected
+
+
 def ask_choice(prompt: str, valid_choices: Sequence[str], default: str | None = None) -> str:
     """Prompt the user to choose from valid options."""
     valid_normalized = {choice.lower(): choice for choice in valid_choices}

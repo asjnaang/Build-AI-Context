@@ -208,6 +208,7 @@ class CodeExporter:
         filetree_content: Optional[str] = None,
         timestamp: Optional[str] = None,
         max_file_lines: int | None = None,
+        warnings: Sequence[Dict[str, object]] = (),
     ) -> Path:
         """Write bundles and manifest to the output directory."""
         return writing.write_bundles_and_manifest(
@@ -225,6 +226,7 @@ class CodeExporter:
             timestamp,
             self.redact,
             max_file_lines=max_file_lines,
+            warnings=warnings,
         )
 
     # -------------------------------------------------------------------------
@@ -300,9 +302,13 @@ class CodeExporter:
 
         # Bundle packing size defaults to DEFAULT_MAX_LINES (8000) via max_lines.
         # max_file_lines only controls which source files are skipped for size.
-        chunks, skipped_during_split = self.split_into_chunks(
+        chunks, split_items = self.split_into_chunks(
             selected_files, max_lines, max_file_lines=max_file_lines
         )
+        warnings = [item for item in split_items if item.get("reason") == "large_file_warning"]
+        skipped_during_split = [
+            item for item in split_items if item.get("reason") != "large_file_warning"
+        ]
         bundles, skipped_during_pack = self.pack_chunks(chunks, max_lines)
         skipped_during_processing = skipped_during_split + skipped_during_pack
 
@@ -334,6 +340,7 @@ class CodeExporter:
             selection_metadata=selection_metadata,
             skip_secret_files=skip_secret_files,
             skipped_during_pack=skipped_during_processing,
+            warnings=warnings,
             filetree_name=filetree_name,
             filetree_content=filetree_content,
             timestamp=timestamp,

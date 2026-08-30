@@ -19,6 +19,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.env
 
 # Virtual environments
 .venv/
@@ -54,6 +55,7 @@ uv.lock
 
 # Ignore filetree files (all timestamps)
 *_file_tree_*.txt
+.gapply*
 
 # Ignore code graph files (all timestamps)
 *_code_graph_*.txt
