@@ -131,81 +131,79 @@ class TestIcons:
 
 
 class TestFiletreeGeneration:
-    """Tests for filetree generation."""
+    """Tests for filetree generation (AI-agent-readable path lists)."""
 
-    def test_filetree_contains_files(self, tmp_path):
-        """Test that generated filetree contains file names."""
-        (tmp_path / "test.py").write_text("print('hello')")
-        (tmp_path / "README.md").write_text("# Test")
-
+    def _scan_tree(self, tmp_path):
         exporter = CodeExporter()
         files, _ = exporter.scan_supported_files(tmp_path, skip_secret_files=True)
+        return exporter.generate_filetree(files, tmp_path)
 
-        filetree = exporter.generate_filetree(files, tmp_path)
+    def test_filetree_lists_full_relative_paths_one_per_line(self, tmp_path):
+        """Nested files must appear as full posix paths, one per line."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.py").write_text("print('hello')")
+        (tmp_path / "README.md").write_text("# Test")
 
-        assert "test.py" in filetree
-        assert "README.md" in filetree
+        filetree = self._scan_tree(tmp_path)
+        path_lines = self._section_lines(filetree, "paths:")
 
-    def test_filetree_contains_icons(self, tmp_path):
-        """Test that generated filetree contains icons."""
+        assert path_lines == ["README.md", "src/main.py"]
+
+    def test_filetree_includes_comma_separated_paths(self, tmp_path):
+        """Same files must also appear as one comma-separated line."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.py").write_text("print('hello')")
+        (tmp_path / "README.md").write_text("# Test")
+        (tmp_path / "app.kt").write_text("fun main() {}")
+
+        filetree = self._scan_tree(tmp_path)
+        csv_lines = self._section_lines(filetree, "paths_csv:")
+
+        assert csv_lines == ["README.md, app.kt, src/main.py"]
+
+    def test_filetree_omits_icons_and_box_drawing(self, tmp_path):
+        """Pretty-print chrome is noise for agents; emit plain text only."""
         (tmp_path / "test.py").write_text("print('hello')")
         (tmp_path / "test.kt").write_text("fun main() {}")
 
-        exporter = CodeExporter()
-        files, _ = exporter.scan_supported_files(tmp_path, skip_secret_files=True)
+        filetree = self._scan_tree(tmp_path)
 
-        filetree = exporter.generate_filetree(files, tmp_path)
+        for token in ("🐍", "🟪", "📊", "📁", "├──", "└──", "│"):
+            assert token not in filetree
 
-        assert "🐍" in filetree  # Python icon
-        assert "🟪" in filetree  # Kotlin icon
-
-    def test_filetree_contains_summary(self, tmp_path):
-        """Test that generated filetree contains a summary section."""
-        (tmp_path / "test.py").write_text("print('hello')")
-
-        exporter = CodeExporter()
-        files, _ = exporter.scan_supported_files(tmp_path, skip_secret_files=True)
-
-        filetree = exporter.generate_filetree(files, tmp_path)
-
-        assert "📊 File Summary:" in filetree
-        assert "Total:" in filetree
-
-    def test_filetree_summary_shows_type_names(self, tmp_path):
-        """Test that summary shows file type names."""
+    def test_filetree_contains_file_count_and_type_counts(self, tmp_path):
+        """Keep the summary, but as parseable key/count lines."""
         (tmp_path / "test.py").write_text("print('hello')")
         (tmp_path / "test2.py").write_text("print('world')")
+        (tmp_path / "README.md").write_text("# Test")
 
-        exporter = CodeExporter()
-        files, _ = exporter.scan_supported_files(tmp_path, skip_secret_files=True)
+        filetree = self._scan_tree(tmp_path)
 
-        filetree = exporter.generate_filetree(files, tmp_path)
-
-        assert "Python" in filetree
-
-    def test_filetree_shows_directory_structure(self, tmp_path):
-        """Test that filetree shows directory structure."""
-        (tmp_path / "src").mkdir()
-        (tmp_path / "src" / "main.py").write_text("print('hello')")
-
-        exporter = CodeExporter()
-        files, _ = exporter.scan_supported_files(tmp_path, skip_secret_files=True)
-
-        filetree = exporter.generate_filetree(files, tmp_path)
-
-        assert "src/" in filetree
-        assert "main.py" in filetree
+        assert "file_count: 3" in filetree
+        type_lines = self._section_lines(filetree, "types:")
+        assert "python: 2" in type_lines
+        assert "config_docs: 1" in type_lines
 
     def test_filetree_root_name(self, tmp_path):
-        """Test that filetree shows root directory name."""
+        """Root is a labeled field, not a decorated tree header."""
         (tmp_path / "test.py").write_text("print('hello')")
 
-        exporter = CodeExporter()
-        files, _ = exporter.scan_supported_files(tmp_path, skip_secret_files=True)
+        filetree = self._scan_tree(tmp_path)
 
-        filetree = exporter.generate_filetree(files, tmp_path)
+        assert f"root: {tmp_path.name}" in filetree
 
-        assert f"{tmp_path.name}/" in filetree
+    @staticmethod
+    def _section_lines(filetree: str, header: str) -> list[str]:
+        lines = filetree.splitlines()
+        start = lines.index(header) + 1
+        collected = []
+        for line in lines[start:]:
+            if not line.strip():
+                break
+            if line.endswith(":") and ":" in line and " " not in line.rstrip(":"):
+                break
+            collected.append(line)
+        return collected
 
 
 class TestRedactFlag:
