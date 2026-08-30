@@ -249,13 +249,27 @@ At the resolved writable session root, maintain:
 - `live-tree/` is the authoritative cumulative FE and BE baseline for this session.
 - `baseline-ledger.json` records each selected path, source manifest, source bundle, SHA-256, size, installation order, and whether later user-reported patches changed or disproved it.
 - Never use a temporary package-extraction directory as the cumulative baseline.
+- `artifact-ledger.json` records delivered patch artifacts and exact preimages and postimages.
+- `session-anchor.json` identifies the one cumulative baseline after compaction or working-directory changes.
+
+### Mandatory live-baseline re-entry
+
+Before every substantive follow-up coding task, before asking for repository files again, and after compaction, tool reset, working-directory change, or new attachments:
+
+1. Reopen `<root>/.ai-context/session-anchor.json`, `baseline-ledger.json`, `artifact-ledger.json`, and `live-tree/` from disk. Do not rely on conversation memory.
+2. Verify task-relevant live-tree paths against ledger SHA-256 values and reconcile confirmed-applied artifacts.
+3. Reuse valid paths. Do not create another cumulative baseline or request unchanged files represented by valid ledger entries.
+4. If only the anchor is missing, rebuild it from a valid ledger and live tree. If the baseline is missing but the complete source package remains accessible, reconstruct it automatically. Otherwise report the exact missing state or source files.
+5. Atomically write and reopen `session-anchor.json` after first successful ingestion. Record the absolute root, live-tree and ledger paths, manifest project root, latest package identity, and validation timestamp.
+
+`<root>/.ai-context/live-tree/` remains authoritative until runtime destruction or an explicit repository-session switch. A new prompt turn or current-directory change does not create a new baseline.
 
 ### Deterministic package ingestion
 
 For every newly attached manifest and its bundles:
 
 1. Resolve the newest manifest by parsed `created_at_utc`, not filename order.
-2. Confirm that every manifest-named bundle is attached before extraction.
+2. Confirm that every manifest-named bundle is attached before extraction. A manifest naming four bundles is incomplete when only bundle 004 is attached. Preserve the current live tree and report exact missing bundle filenames. A newly generated partial manifest is acceptable only when it names exactly the attached bundles and selected paths. Never reinterpret an incomplete full manifest as partial.
 3. Materialize the embedded extractor once as `extract_ai_context.py` and verify its SHA-256. Reuse that exact file for later packages. Do not rewrite, summarize, escape, or recreate the extractor unless the supplied prompt explicitly replaces it.
 4. Run the exact extractor with a unique immutable output directory:
 
@@ -269,21 +283,33 @@ python3 extract_ai_context.py \
 6. Select the exact repository byte representation by the unique manifest `size_bytes` match, including terminal-newline state. Record its SHA-256. If the manifest SHA-256 matches only a transport-normalized candidate with a different size, preserve the size-selected bytes, report the normalization mismatch, and do not claim byte-hash equality.
 7. Before diff generation, compute and record `git hash-object -- <path>` for every target preimage. If a prior `gapply` log supplies a live blob hash, require equality.
 8. Merge only `manifest.selected_files` into `.ai-context/live-tree/`, preserving repository-relative paths and exact bytes. Do not merge the file-tree report as source code.
-8. Replace an existing live-tree path only when the new manifest explicitly selected that path and its reconstructed hash passed validation.
-9. Keep every live-tree path omitted from the new partial manifest unchanged. Omission does not mean deletion or freshness.
-10. Delete a live-tree path only when the user explicitly supplies verified deletion evidence, such as a Git diff or manifest deletion record. A path missing from `selected_files` or from a file-tree listing is not deletion evidence.
-11. Update `baseline-ledger.json` atomically after the merge, then verify that each ledger hash matches the installed live-tree bytes.
-12. Use `.ai-context/live-tree/` as the only editable repository baseline for later investigation, implementation, tests, and diff generation.
+9. Replace an existing live-tree path only when the new manifest explicitly selected that path and its reconstructed hash passed validation.
+10. Keep every live-tree path omitted from the new partial manifest unchanged. Omission does not mean deletion or freshness.
+11. Delete a live-tree path only when the user explicitly supplies verified deletion evidence, such as a Git diff or manifest deletion record. A path missing from `selected_files` or from a file-tree listing is not deletion evidence.
+12. Update `baseline-ledger.json` atomically after the merge, then verify that each ledger hash matches the installed live-tree bytes.
+13. For a directly attached exact repository file, replace only its unambiguous repository-relative live-tree path, record `source_type: direct-file`, and retain all other paths. Ask only for its repository-relative path when ambiguous.
+14. Use `.ai-context/live-tree/` as the only editable repository baseline for later investigation, implementation, tests, and diff generation.
+
+### Delivered artifact retention
+
+Before exposing any diff or ZIP:
+
+1. Retain an immutable copy under `<root>/.ai-context/artifacts/<sequence>-<artifact-name>/`.
+2. Atomically append to `artifact-ledger.json`: artifact name and SHA-256, deterministic diff order, changed paths, each preimage and postimage SHA-256 and Git blob hash, timestamp, and `application_status: delivered-unconfirmed`.
+3. For ZIPs, retain both the ZIP and its exact ordered `.diff` files.
+4. Reopen and verify the retained artifact and ledger. Chat text or a prior download link is not patch-continuity evidence.
 
 ### Patch continuity
 
 When the user reports that a delivered patch was applied successfully:
 
-1. Locate the exact delivered diff artifact and its recorded preimages.
-2. Apply that exact diff to an independent copy of `.ai-context/live-tree/`.
-3. Require `git apply --check`, successful application, and byte-level validation.
-4. Promote the validated postimages into `.ai-context/live-tree/` and update the ledger with artifact name, application order, old hash, and new hash.
-5. If the user later supplies an exact current file or a newer selected bundle path, that direct current source overrides the reconstructed postimage.
+1. Resolve the confirmation to the latest `delivered-unconfirmed` artifact unless another is named. If multiple pending artifacts make this ambiguous, ask only which artifact was applied.
+2. Locate the immutable retained artifact and preimages through `artifact-ledger.json`; never recreate it from chat text or summaries.
+3. Require affected live-tree preimages to match the artifact record. Apply the retained diff or ordered ZIP contents to an independent copy with `git apply --check` and then `git apply`.
+4. Compare results byte-for-byte with recorded postimage hashes, then atomically promote them into `.ai-context/live-tree/`.
+5. Update `baseline-ledger.json` with artifact name, order, old and new hashes, and `baseline_status: current`; mark the artifact `application_status: confirmed-and-promoted`. Reopen both ledgers and re-hash affected paths.
+6. On validation failure, leave the live tree unchanged, mark `confirmation_status: promotion-failed`, and report the exact mismatch.
+7. A newer exact file or selected bundle overrides only its selected path.
 
 When a patch fails or a path is rejected:
 
@@ -296,7 +322,7 @@ When a patch fails or a path is rejected:
 - Never build a workspace by overlaying a newer partial package onto an older package directory and then treating all remaining older paths as current.
 - Combining manifests is permitted only through the live-tree ledger rules above.
 - Every modified existing file must have one proven current preimage: either the newest validated selected copy, the validated postimage of a user-confirmed applied patch, or a directly supplied exact file.
-- Before generating a diff, compare every target preimage hash with the ledger. Stop if any target is stale, conflicting, missing, or disproved.
+- Before generating a diff, compare every target preimage hash with the ledger. Stop if any target is stale, conflicting, missing, or disproved. Reconcile all `confirmed-and-promoted` artifacts first so the next diff starts from the post-patch baseline, never the original upload.
 - A repository file-tree entry proves existence only. It never supplies editable bytes and never refreshes a ledger entry.
 
 ### Extraction failure diagnosis
