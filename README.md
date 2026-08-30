@@ -133,7 +133,7 @@ After running, you'll get:
 | `<project>_bundle_001_<timestamp>.txt`, ... | Text bundles with consistent timestamps |
 | `<project>_manifest_<timestamp>.json` | Maps every file to its bundle and line numbers |
 | `<project>_readme_<timestamp>.txt` | Quick summary of what was exported |
-| `<project>_file_tree_<timestamp>.txt` | Filetree with icons and type summary |
+| `<project>_file_tree_<timestamp>.txt` | Path list (line + comma separated) and type counts |
 | `PROJECT_OVERVIEW.txt` | (with `--project-overview`) Architecture overview |
 
 ### Bundle Format
@@ -183,7 +183,7 @@ def authenticate(user):
 
 ## Filetree Feature
 
-Generate a visual filetree with file type icons and summary statistics:
+Generate a path list that AI agents can parse: one path per line, plus the same paths comma-separated:
 
 ```bash
 # Generate filetree only (quick project overview)
@@ -196,21 +196,22 @@ baic . --non-interactive
 
 Example filetree output:
 ```
-myproject/
-├── 🐍 main.py
-├── 📕 README.md
-├── src/
-│   ├── 🟪 app.kt
-│   └── 📄 config.xml
-...
+root: myproject
+file_count: 4
 
-📊 File Summary:
-  🟪 Kotlin       × 15
-  📕 Markdown     × 3
-  🐍 Python       × 2
-  📄 XML          × 1
-  ───
-  📁  Total: 21 files
+paths:
+README.md
+main.py
+src/app.kt
+src/config.xml
+
+paths_csv:
+README.md, main.py, src/app.kt, src/config.xml
+
+types:
+config_docs: 2
+java_kotlin: 1
+python: 1
 ```
 
 ## Redaction
