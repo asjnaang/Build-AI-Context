@@ -41,7 +41,7 @@ def generate_filetree(files: Sequence[SourceFile], root: Path) -> str:
 
 
 def update_gitignore(root: Path, filetree_name: str) -> None:
-    """Update .gitignore to ignore exported_sources and filetree files."""
+    """Update .gitignore to ignore exported_sources, filetree, and graph files."""
     gitignore_path = root / ".gitignore"
 
     existing_lines: List[str] = []
@@ -56,6 +56,9 @@ def update_gitignore(root: Path, filetree_name: str) -> None:
     has_filetree = any(
         "_file_tree_" in line and not line.strip().startswith("#") for line in existing_lines
     )
+    has_graph = any(
+        "_code_graph_" in line and not line.strip().startswith("#") for line in existing_lines
+    )
 
     if existing_lines and existing_lines[-1].strip():
         new_lines.append("")
@@ -67,6 +70,10 @@ def update_gitignore(root: Path, filetree_name: str) -> None:
     if not has_filetree:
         new_lines.append("# Ignore filetree files (all timestamps)")
         new_lines.append("*_file_tree_*.txt")
+
+    if not has_graph:
+        new_lines.append("# Ignore code graph files (all timestamps)")
+        new_lines.append("*_code_graph_*.txt")
 
     if new_lines:
         updated = existing_lines + new_lines

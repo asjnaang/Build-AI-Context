@@ -95,6 +95,7 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 |--------|-------------|---------|
 | `project_root` | Directory to scan (default: current) | `baic /path/to/project` |
 | `--tree` | Generate filetree only, exit | `baic --tree .` |
+| `--graph` | Generate code graph only (catalog + imports), exit | `baic --graph .` |
 | `--categories` | Export by category | `--categories python typescript` |
 | `--paths` | Export by path/filename | `--paths src tests` |
 | `--keywords` | Search in code content | `--keywords TODO FIXME` |
@@ -134,6 +135,7 @@ After running, you'll get:
 | `<project>_manifest_<timestamp>.json` | Maps every file to its bundle and line numbers |
 | `<project>_readme_<timestamp>.txt` | Quick summary of what was exported |
 | `<project>_file_tree_<timestamp>.txt` | Path list (line + comma separated) and type counts |
+| `<project>_code_graph_<timestamp>.txt` | (with `--graph`) Symbol catalog + import edges |
 | `PROJECT_OVERVIEW.txt` | (with `--project-overview`) Architecture overview |
 
 ### Bundle Format
@@ -210,6 +212,45 @@ config_docs: 2
 java_kotlin: 1
 python: 1
 ```
+
+## Code graph
+
+`baic --graph` writes a small map of the repo for AI agents: a per-file catalog of defs, plus import edges. Same flag style as `--tree`. One scan, then exit.
+
+```bash
+# Graph only
+baic --graph .
+baic --graph /path/to/project
+
+# Tree + graph, one scan
+baic --tree --graph .
+```
+
+Python is parsed with the stdlib `ast` module. TypeScript/JavaScript, Kotlin, Swift, Java, and Dart use tree-sitter when `build-ai-context[graph]` is installed (`pip install 'build-ai-context[graph]'`, Python 3.10+). Without that extra, those languages still get a heuristic catalog + imports so `--graph` never requires a native wheel.
+
+Example:
+
+```
+root: myproject
+file_count: 4
+parsed: 3
+skipped: 1
+engine: ast, tree-sitter
+languages: python=2, typescript=1
+
+catalog:
+src/cli.py:
+  fn: main,
+  fn: run_exporter,
+src/models.py:
+  class: SourceFile,
+
+imports:
+src/cli.py --> src/exporter.py,
+src/cli.py --> src/models.py,
+```
+
+This is not a full call graph. Local imports are resolved to project files when we can; third-party / stdlib names stay as module strings.
 
 ## Redaction
 
@@ -308,7 +349,7 @@ usage: build-ai-context [-h] [--max-file-lines N] [--output-dir OUTPUT_DIR]
                        [--non-interactive] [--categories [CATEGORIES ...]]
                        [--paths [PATHS ...]] [--keywords [KEYWORDS ...]]
                        [--include-secret-files] [--project-overview]
-                       [--tree] [--redact] [--version]
+                       [--tree] [--graph] [--redact] [--version]
                        [project_root]
 
 positional arguments:
@@ -318,6 +359,7 @@ options:
   -h, --help            Show help message
   --version             Show version
   --tree                Generate filetree only and exit
+  --graph               Generate code graph (catalog + imports) and exit
   --redact              Redact secrets from output (default: disabled)
   --max-file-lines N    Skip repo source files with >= N lines (default: 3000;
                         0 disables the per-file limit). Output bundles are
