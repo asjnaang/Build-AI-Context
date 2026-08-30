@@ -437,6 +437,8 @@ For every diff that modifies an existing file:
 
 Validation against reconstructed originals proves internal consistency with that baseline, not applicability to an unverified live tree. State the baseline used.
 
+Before diff generation, require each target preimage `git hash-object` to equal the newest exact selected bundle entry or directly supplied live-file hash. A successful reconstruction report is insufficient when it reports byte normalization or size mismatches. For multi-diff ZIPs, simulate application in the exact deterministic filename order used by `gapply`; after each patch, verify all remaining preimages still match before continuing.
+
 If a patch fails against the user's tree, treat it as a baseline failure. Do not retry with weaker context, zero-context hunks, or partial workarounds. Request the exact current rejected files and all related wiring, configuration, migration, and nearest test files needed for one corrected atomic pass.
 
 Before delivering any artifact:
