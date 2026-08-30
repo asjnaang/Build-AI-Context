@@ -8,6 +8,7 @@ languages if tree-sitter is missing so --graph still works on 3.9.
 from __future__ import annotations
 
 import ast
+import json
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -48,6 +49,7 @@ _JS_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
 class Symbol:
     kind: str
     name: str
+    line: Optional[int] = None
 
 
 @dataclass
@@ -59,8 +61,14 @@ class FileFacts:
     error: Optional[str] = None
 
 
-def generate_graph(files: Sequence[SourceFile], root: Path) -> str:
+def generate_graph(
+    files: Sequence[SourceFile], root: Path, output_format: str = "txt"
+) -> str:
     """Generate a catalog + imports graph that AI agents can parse."""
+    fmt = (output_format or "txt").strip().lower()
+    if fmt not in {"txt", "json"}:
+        raise ValueError("output_format must be 'txt' or 'json'")
+
     graphable = [f for f in files if f.rel_path.suffix.lower() in GRAPHABLE_EXTENSIONS]
     skipped = len(files) - len(graphable)
     facts: List[FileFacts] = []
@@ -78,30 +86,38 @@ def generate_graph(files: Sequence[SourceFile], root: Path) -> str:
         engines.add(item.engine)
 
     all_paths = [f.rel_path.as_posix() for f in files]
+    path_set = set(all_paths)
+    import_rows = _collect_imports(facts, path_set)
+    ranks = _pagerank(
+        [item.path for item in facts],
+        [(src, dst) for src, dst, resolved in import_rows if resolved],
+    )
+    catalog_items = [item for item in facts if item.symbols]
+    catalog_items.sort(key=lambda item: (-ranks.get(item.path, 0.0), item.path))
 
-    lines: List[str] = [
-        f"root: {root.name}",
-        f"file_count: {len(files)}",
-        f"parsed: {parsed}",
-        f"skipped: {skipped}",
-        f"engine: {_format_engines(engines)}",
-        f"languages: {_format_languages(lang_counts)}",
-        "",
-        "catalog:",
-    ]
-
-    for item in sorted(facts, key=lambda f: f.path):
-        if not item.symbols:
-            continue
-        lines.append(f"{item.path}:")
-        for symbol in item.symbols:
-            lines.append(f"  {symbol.kind}: {symbol.name},")
-
-    lines.extend(["", "imports:"])
-    import_lines = _format_imports(facts, all_paths)
-    lines.extend(import_lines)
-
-    return "\n".join(lines)
+    if fmt == "json":
+        return _format_json(
+            root=root,
+            files=files,
+            parsed=parsed,
+            skipped=skipped,
+            engines=engines,
+            lang_counts=lang_counts,
+            catalog_items=catalog_items,
+            ranks=ranks,
+            import_rows=import_rows,
+        )
+    return _format_txt(
+        root=root,
+        files=files,
+        parsed=parsed,
+        skipped=skipped,
+        engines=engines,
+        lang_counts=lang_counts,
+        catalog_items=catalog_items,
+        ranks=ranks,
+        import_rows=import_rows,
+    )
 
 
 def extract_file(source: SourceFile) -> FileFacts:
@@ -129,14 +145,14 @@ def _extract_python(path: str, text: str) -> FileFacts:
 
     for node in tree.body:
         if isinstance(node, ast.ClassDef):
-            symbols.append(Symbol("class", node.name))
+            symbols.append(Symbol("class", node.name, node.lineno))
             for child in node.body:
                 if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     if _keep_func_name(child.name):
-                        symbols.append(Symbol("method", f"{node.name}.{child.name}"))
+                        symbols.append(Symbol("method", f"{node.name}.{child.name}", child.lineno))
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if _keep_func_name(node.name):
-                symbols.append(Symbol("fn", node.name))
+                symbols.append(Symbol("fn", node.name, node.lineno))
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name and alias.name != "__future__":
@@ -221,12 +237,13 @@ def _walk_treesitter(node, src: bytes, symbols: List[Symbol], imports: List[str]
     if kind:
         name = _first_identifier(node, src)
         if name and _keep_func_name(name):
+            line = node.start_point[0] + 1
             if kind == "fn" and parent_class:
-                symbols.append(Symbol("method", f"{parent_class}.{name}"))
+                symbols.append(Symbol("method", f"{parent_class}.{name}", line))
             elif kind == "method" and parent_class:
-                symbols.append(Symbol("method", f"{parent_class}.{name}"))
+                symbols.append(Symbol("method", f"{parent_class}.{name}", line))
             else:
-                symbols.append(Symbol(kind, name))
+                symbols.append(Symbol(kind, name, line))
 
     next_parent = parent_class
     if kind in {"class", "struct", "enum", "interface", "protocol", "object", "actor"} and name:
@@ -383,7 +400,7 @@ def _merge_kotlin_object_interface(text: str, symbols: List[Symbol]) -> None:
         name = match.group(1)
         kind = "object" if match.group(0).startswith("object") else "interface"
         if name not in existing:
-            symbols.append(Symbol(kind, name))
+            symbols.append(Symbol(kind, name, text.count("\n", 0, match.start()) + 1))
             existing.add(name)
 
 
@@ -432,23 +449,23 @@ def _heuristic_js_symbols(text: str) -> List[Symbol]:
         text,
         re.MULTILINE,
     ):
-        symbols.append(Symbol("fn", match.group(1)))
+        symbols.append(Symbol("fn", match.group(1), _line_at(text, match.start())))
     for match in re.finditer(
         r"^\s*(?:export\s+)?(?:default\s+)?class\s+([A-Za-z_$][\w$]*)",
         text,
         re.MULTILINE,
     ):
-        symbols.append(Symbol("class", match.group(1)))
+        symbols.append(Symbol("class", match.group(1), _line_at(text, match.start())))
     for match in re.finditer(
         r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>",
         text,
         re.MULTILINE,
     ):
-        symbols.append(Symbol("fn", match.group(1)))
+        symbols.append(Symbol("fn", match.group(1), _line_at(text, match.start())))
     for match in re.finditer(r"^\s*(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)", text, re.MULTILINE):
-        symbols.append(Symbol("interface", match.group(1)))
+        symbols.append(Symbol("interface", match.group(1), _line_at(text, match.start())))
     for match in re.finditer(r"^\s*(?:export\s+)?type\s+([A-Za-z_$][\w$]*)\s*=", text, re.MULTILINE):
-        symbols.append(Symbol("type", match.group(1)))
+        symbols.append(Symbol("type", match.group(1), _line_at(text, match.start())))
     return symbols
 
 
@@ -459,7 +476,7 @@ def _heuristic_import_lines(text: str, pattern: str) -> List[str]:
 def _heuristic_kotlin_symbols(text: str) -> List[Symbol]:
     symbols: List[Symbol] = []
     current_class: Optional[str] = None
-    for raw in text.splitlines():
+    for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         class_match = re.match(
             r"(?:(?:public|private|internal|protected|open|data|sealed|abstract)\s+)*"
@@ -469,22 +486,22 @@ def _heuristic_kotlin_symbols(text: str) -> List[Symbol]:
         if class_match:
             kind = "enum" if "enum" in class_match.group(1) else class_match.group(1)
             current_class = class_match.group(2)
-            symbols.append(Symbol(kind, current_class))
+            symbols.append(Symbol(kind, current_class, lineno))
             continue
         fn_match = re.match(r"(?:(?:public|private|internal|protected|override|suspend)\s+)*fun\s+([A-Za-z_][\w]*)\s*\(", line)
         if fn_match:
             name = fn_match.group(1)
             if current_class:
-                symbols.append(Symbol("method", f"{current_class}.{name}"))
+                symbols.append(Symbol("method", f"{current_class}.{name}", lineno))
             else:
-                symbols.append(Symbol("fn", name))
+                symbols.append(Symbol("fn", name, lineno))
     return symbols
 
 
 def _heuristic_swift_symbols(text: str) -> List[Symbol]:
     symbols: List[Symbol] = []
     current: Optional[Tuple[str, str]] = None
-    for raw in text.splitlines():
+    for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         type_match = re.match(
             r"(?:(?:public|private|internal|open|final|fileprivate)\s+)*"
@@ -493,7 +510,7 @@ def _heuristic_swift_symbols(text: str) -> List[Symbol]:
         )
         if type_match:
             current = (type_match.group(1), type_match.group(2))
-            symbols.append(Symbol(current[0], current[1]))
+            symbols.append(Symbol(current[0], current[1], lineno))
             continue
         fn_match = re.match(
             r"(?:(?:public|private|internal|open|override|static|mutating)\s+)*func\s+([A-Za-z_][\w]*)\s*\(",
@@ -502,16 +519,16 @@ def _heuristic_swift_symbols(text: str) -> List[Symbol]:
         if fn_match:
             name = fn_match.group(1)
             if current and current[0] != "protocol":
-                symbols.append(Symbol("method", f"{current[1]}.{name}"))
+                symbols.append(Symbol("method", f"{current[1]}.{name}", lineno))
             else:
-                symbols.append(Symbol("fn", name))
+                symbols.append(Symbol("fn", name, lineno))
     return symbols
 
 
 def _heuristic_java_symbols(text: str) -> List[Symbol]:
     symbols: List[Symbol] = []
     current: Optional[str] = None
-    for raw in text.splitlines():
+    for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         type_match = re.match(
             r"(?:(?:public|private|protected|abstract|final|static)\s+)*"
@@ -520,7 +537,7 @@ def _heuristic_java_symbols(text: str) -> List[Symbol]:
         )
         if type_match:
             current = type_match.group(2)
-            symbols.append(Symbol(type_match.group(1), current))
+            symbols.append(Symbol(type_match.group(1), current, lineno))
             continue
         method_match = re.match(
             r"(?:(?:public|private|protected|static|final|synchronized|abstract)\s+)+"
@@ -528,14 +545,14 @@ def _heuristic_java_symbols(text: str) -> List[Symbol]:
             line,
         )
         if method_match and current and method_match.group(1) not in {current, "if", "for", "while", "switch"}:
-            symbols.append(Symbol("method", f"{current}.{method_match.group(1)}"))
+            symbols.append(Symbol("method", f"{current}.{method_match.group(1)}", lineno))
     return symbols
 
 
 def _heuristic_dart_symbols(text: str) -> List[Symbol]:
     symbols: List[Symbol] = []
     for match in re.finditer(r"^\s*(?:class|mixin)\s+([A-Za-z_][\w]*)", text, re.MULTILINE):
-        symbols.append(Symbol("class", match.group(1)))
+        symbols.append(Symbol("class", match.group(1), _line_at(text, match.start())))
     for match in re.finditer(
         r"^\s*(?:[A-Za-z_][\w<>,\s?]*\s+)?([A-Za-z_][\w]*)\s*\([^;]*\)\s*(?:async\s*)?\{",
         text,
@@ -546,19 +563,125 @@ def _heuristic_dart_symbols(text: str) -> List[Symbol]:
             # class constructors share the class name; skip those already added
             if any(s.name == name and s.kind == "class" for s in symbols):
                 continue
-            symbols.append(Symbol("fn", name))
+            symbols.append(Symbol("fn", name, _line_at(text, match.start())))
     return symbols
 
 
-def _format_imports(facts: Sequence[FileFacts], all_paths: Sequence[str]) -> List[str]:
-    path_set = set(all_paths)
-    lines: List[str] = []
+def _line_at(text: str, index: int) -> int:
+    return text.count("\n", 0, index) + 1
+
+
+def _collect_imports(
+    facts: Sequence[FileFacts], path_set: Set[str]
+) -> List[Tuple[str, str, bool]]:
+    rows: List[Tuple[str, str, bool]] = []
     for item in sorted(facts, key=lambda f: f.path):
         for raw in item.imports:
             resolved = resolve_import(item.path, raw, path_set)
-            target = resolved or raw
-            lines.append(f"{item.path} --> {target},")
-    return lines
+            rows.append((item.path, resolved or raw, resolved is not None))
+    return rows
+
+
+def _pagerank(
+    nodes: Sequence[str], edges: Sequence[Tuple[str, str]], damping: float = 0.85, rounds: int = 20
+) -> Dict[str, float]:
+    """PageRank on local file-to-file import edges (Aider-style importance)."""
+    unique = list(dict.fromkeys(nodes))
+    if not unique:
+        return {}
+    n = len(unique)
+    node_set = set(unique)
+    incoming: Dict[str, List[str]] = defaultdict(list)
+    outdeg: Dict[str, int] = defaultdict(int)
+    for src, dst in edges:
+        if src in node_set and dst in node_set and src != dst:
+            incoming[dst].append(src)
+            outdeg[src] += 1
+    rank = {node: 1.0 / n for node in unique}
+    for _ in range(rounds):
+        dangling = sum(rank[node] for node in unique if outdeg[node] == 0)
+        nxt: Dict[str, float] = {}
+        for node in unique:
+            inbound = sum(rank[src] / outdeg[src] for src in incoming[node])
+            nxt[node] = (1.0 - damping) / n + damping * (inbound + dangling / n)
+        rank = nxt
+    return rank
+
+
+def _format_txt(
+    root: Path,
+    files: Sequence[SourceFile],
+    parsed: int,
+    skipped: int,
+    engines: Iterable[str],
+    lang_counts: Dict[str, int],
+    catalog_items: Sequence[FileFacts],
+    ranks: Dict[str, float],
+    import_rows: Sequence[Tuple[str, str, bool]],
+) -> str:
+    lines: List[str] = [
+        f"root: {root.name}",
+        f"file_count: {len(files)}",
+        f"parsed: {parsed}",
+        f"skipped: {skipped}",
+        f"engine: {_format_engines(engines)}",
+        f"languages: {_format_languages(lang_counts)}",
+        "",
+        "catalog:",
+    ]
+    for item in catalog_items:
+        lines.append(f"{item.path}:")
+        lines.append(f"  rank: {ranks.get(item.path, 0.0):.4f},")
+        for symbol in item.symbols:
+            lines.append(f"  {_format_symbol_line(symbol)}")
+    lines.extend(["", "imports:"])
+    for src, dest, _resolved in import_rows:
+        lines.append(f"{src} --> {dest},")
+    return "\n".join(lines)
+
+
+def _format_json(
+    root: Path,
+    files: Sequence[SourceFile],
+    parsed: int,
+    skipped: int,
+    engines: Iterable[str],
+    lang_counts: Dict[str, int],
+    catalog_items: Sequence[FileFacts],
+    ranks: Dict[str, float],
+    import_rows: Sequence[Tuple[str, str, bool]],
+) -> str:
+    payload = {
+        "root": root.name,
+        "file_count": len(files),
+        "parsed": parsed,
+        "skipped": skipped,
+        "engine": _format_engines(engines),
+        "languages": dict(sorted(lang_counts.items())),
+        "catalog": [
+            {
+                "path": item.path,
+                "rank": round(ranks.get(item.path, 0.0), 6),
+                "symbols": [
+                    {
+                        "kind": symbol.kind,
+                        "name": symbol.name,
+                        **({"line": symbol.line} if symbol.line else {}),
+                    }
+                    for symbol in item.symbols
+                ],
+            }
+            for item in catalog_items
+        ],
+        "imports": [{"from": src, "to": dest} for src, dest, _resolved in import_rows],
+    }
+    return json.dumps(payload, indent=2) + "\n"
+
+
+def _format_symbol_line(symbol: Symbol) -> str:
+    if symbol.line:
+        return f"{symbol.kind}: {symbol.name} @{symbol.line},"
+    return f"{symbol.kind}: {symbol.name},"
 
 
 def resolve_import(from_path: str, spec: str, path_set: Set[str]) -> Optional[str]:

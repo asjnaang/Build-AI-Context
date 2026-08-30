@@ -54,4 +54,5 @@ uv.lock
 
 # Ignore code graph files (all timestamps)
 *_code_graph_*.txt
+*_code_graph_*.json
 

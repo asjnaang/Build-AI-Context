@@ -157,9 +157,11 @@ class CodeExporter:
         """Generate a path-list filetree for AI assistants."""
         return filetree.generate_filetree(files, root)
 
-    def generate_graph(self, files: Sequence[SourceFile], root: Path) -> str:
+    def generate_graph(
+        self, files: Sequence[SourceFile], root: Path, output_format: str = "txt"
+    ) -> str:
         """Generate a catalog + imports graph for AI assistants."""
-        return graph.generate_graph(files, root)
+        return graph.generate_graph(files, root, output_format=output_format)
 
     update_gitignore = staticmethod(filetree.update_gitignore)
 
