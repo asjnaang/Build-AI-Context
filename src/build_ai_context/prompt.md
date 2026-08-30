@@ -155,14 +155,18 @@ def pick(parts, entry):
     final = raw[:-2] if raw.endswith(b"\r\n") else raw[:-1] if raw.endswith((b"\n", b"\r")) else raw
     candidates = dict.fromkeys((stripped, raw, final))
     wanted_hash, wanted_size = entry.get("sha256", ""), entry["size_bytes"]
-    if wanted_hash:
-        for data in candidates:
-            if hashlib.sha256(data).hexdigest() == wanted_hash:
-                return data
-        fail(f"{entry['path']}: no candidate matches manifest SHA-256")
     sized = [data for data in candidates if len(data) == wanted_size]
     if len(sized) == 1:
-        return sized[0]
+        data = sized[0]
+        if wanted_hash and hashlib.sha256(data).hexdigest() != wanted_hash:
+            hash_matches = [
+                candidate
+                for candidate in candidates
+                if hashlib.sha256(candidate).hexdigest() == wanted_hash
+            ]
+            if len(hash_matches) != 1:
+                fail(f"{entry['path']}: size-selected bytes and manifest SHA-256 are inconsistent")
+        return data
     fail(f"{entry['path']}: expected size {wanted_size} does not select one candidate")
 
 
@@ -260,8 +264,9 @@ python3 extract_ai_context.py \
 ```
 
 5. Require exit status `0`, `status: success`, zero skipped-during-pack entries, and a readable reconstruction report.
-6. Verify every reconstructed selected file against its manifest SHA-256 before merging.
-7. Merge only `manifest.selected_files` into `.ai-context/live-tree/`, preserving repository-relative paths and exact bytes. Do not merge the file-tree report as source code.
+6. Select the exact repository byte representation by the unique manifest `size_bytes` match, including terminal-newline state. Record its SHA-256. If the manifest SHA-256 matches only a transport-normalized candidate with a different size, preserve the size-selected bytes, report the normalization mismatch, and do not claim byte-hash equality.
+7. Before diff generation, compute and record `git hash-object -- <path>` for every target preimage. If a prior `gapply` log supplies a live blob hash, require equality.
+8. Merge only `manifest.selected_files` into `.ai-context/live-tree/`, preserving repository-relative paths and exact bytes. Do not merge the file-tree report as source code.
 8. Replace an existing live-tree path only when the new manifest explicitly selected that path and its reconstructed hash passed validation.
 9. Keep every live-tree path omitted from the new partial manifest unchanged. Omission does not mean deletion or freshness.
 10. Delete a live-tree path only when the user explicitly supplies verified deletion evidence, such as a Git diff or manifest deletion record. A path missing from `selected_files` or from a file-tree listing is not deletion evidence.
@@ -422,6 +427,7 @@ For every diff that modifies an existing file:
 - generate exactly one `.diff` file for that changed repository file; never combine multiple changed repository files into one `.diff` file
 - generate it with Git tooling from exact original and intended modified file bodies
 - include valid `diff --git`, `index`, `---`, and `+++` headers
+- generate with Git `--full-index --binary`; every `index` header must contain full 40-character preimage and postimage blob hashes
 - use repository-relative paths
 - record the SHA-256 preimage hash
 - exclude bundle wrappers and metadata
