@@ -183,7 +183,7 @@ def authenticate(user):
 
 ## Filetree Feature
 
-Generate a path list that AI agents can parse: one path per line, plus the same paths comma-separated:
+Generate a path list that AI agents can parse: one full relative path per line, each ending with a comma:
 
 ```bash
 # Generate filetree only (quick project overview)
@@ -200,13 +200,10 @@ root: myproject
 file_count: 4
 
 paths:
-README.md
-main.py
-src/app.kt
-src/config.xml
-
-paths_csv:
-README.md, main.py, src/app.kt, src/config.xml
+README.md,
+main.py,
+src/app.kt,
+src/config.xml,
 
 types:
 config_docs: 2
