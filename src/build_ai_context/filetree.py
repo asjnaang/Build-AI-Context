@@ -31,10 +31,7 @@ def generate_filetree(files: Sequence[SourceFile], root: Path) -> str:
         f"file_count: {len(paths)}",
         "",
         "paths:",
-        *paths,
-        "",
-        "paths_csv:",
-        ", ".join(paths),
+        *[f"{path}," for path in paths],
         "",
         "types:",
     ]
