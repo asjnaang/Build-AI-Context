@@ -126,6 +126,30 @@ class TestCategoryDetection:
         f.touch()
         assert CodeExporter.detect_category(f) == "config_docs"
 
+    def test_detect_sql(self, tmp_path):
+        f = tmp_path / "schema.sql"
+        f.write_text("CREATE TABLE users (id INTEGER PRIMARY KEY);")
+        assert CodeExporter.detect_category(f) == "config_docs"
+
+    def test_detect_csv(self, tmp_path):
+        f = tmp_path / "variables.csv"
+        f.write_text(
+            'variableKey,description,valueOrReference\n'
+            'app.product.productCategory,"Product category, captured at interaction",'
+            '<Refer to section 4.1>'
+        )
+        assert CodeExporter.detect_category(f) == "config_docs"
+
+        files, skipped = CodeExporter.scan_supported_files(
+            tmp_path, skip_secret_files=True
+        )
+        assert skipped == {}
+        assert files[0].lines == [
+            "variableKey,description,valueOrReference",
+            'app.product.productCategory,"Product category, captured at interaction",'
+            '<Refer to section 4.1>',
+        ]
+
     def test_detect_unknown(self, tmp_path):
         f = tmp_path / "test.xyz"
         f.touch()
