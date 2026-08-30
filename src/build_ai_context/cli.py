@@ -104,6 +104,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Generate only a filetree in the current directory and exit.",
     )
     parser.add_argument(
+        "--graph",
+        action="store_true",
+        help="Generate only a code graph (catalog + imports) and exit. "
+        "Combine with --tree to write both artifacts.",
+    )
+    parser.add_argument(
         "--redact",
         action="store_true",
         default=False,
@@ -131,9 +137,8 @@ def main() -> int:
     if args.update_headers:
         return run_update_headers(args)
 
-    # Handle --tree: just generate a filetree in the current directory
-    if args.tree:
-        return run_tree_only(args)
+    if args.tree or args.graph:
+        return run_quick_artifacts(args)
 
     result, _, _ = run_exporter(args, None)
     return result
@@ -152,7 +157,12 @@ def run_update_headers(args) -> int:
 
 
 def run_tree_only(args) -> int:
-    """Generate only a filetree in the current directory."""
+    """Generate only a filetree. Kept as an alias of run_quick_artifacts."""
+    return run_quick_artifacts(args)
+
+
+def run_quick_artifacts(args) -> int:
+    """Write --tree and/or --graph artifacts after a single scan, then exit."""
     exporter = CodeExporter()
 
     try:
@@ -166,25 +176,36 @@ def run_tree_only(args) -> int:
 
         exporter.print_info(f"Scanning project: {root}")
 
-        # Scan files
-        all_files, skipped_reasons = exporter.scan_supported_files(root, skip_secret_files=True)
+        all_files, _skipped_reasons = exporter.scan_supported_files(root, skip_secret_files=True)
         if not all_files:
             exporter.print_warning("No supported files found.")
             return 1
 
         exporter.print_info(f"Detected {len(all_files)} supported file(s).")
 
-        # Generate filetree
-        filetree_content = exporter.generate_filetree(all_files, root)
         timestamp = generate_timestamp()
         folder_name = root.name.replace(" ", "_")
-        filetree_name = f"{folder_name}_file_tree_{timestamp}.txt"
-        filetree_path = root / filetree_name
-        filetree_path.write_text(filetree_content, encoding="utf-8")
-        exporter.update_gitignore(root, filetree_name)
+        wrote_any = False
 
-        exporter.print_success(f"\nFiletree created: {filetree_path}")
-        return 0
+        if getattr(args, "tree", False):
+            filetree_content = exporter.generate_filetree(all_files, root)
+            filetree_name = f"{folder_name}_file_tree_{timestamp}.txt"
+            filetree_path = root / filetree_name
+            filetree_path.write_text(filetree_content, encoding="utf-8")
+            exporter.update_gitignore(root, filetree_name)
+            exporter.print_success(f"\nFiletree created: {filetree_path}")
+            wrote_any = True
+
+        if getattr(args, "graph", False):
+            graph_content = exporter.generate_graph(all_files, root)
+            graph_name = f"{folder_name}_code_graph_{timestamp}.txt"
+            graph_path = root / graph_name
+            graph_path.write_text(graph_content, encoding="utf-8")
+            exporter.update_gitignore(root, graph_name)
+            exporter.print_success(f"Code graph created: {graph_path}")
+            wrote_any = True
+
+        return 0 if wrote_any else 1
 
     except Exception as exc:
         exporter.print_error(f"Unexpected error: {exc}")
@@ -367,9 +388,8 @@ def interactive_main() -> int:
     if args.update_headers:
         return run_update_headers(args)
 
-    # Handle --tree: just generate a filetree in the current directory
-    if args.tree:
-        return run_tree_only(args)
+    if args.tree or args.graph:
+        return run_quick_artifacts(args)
 
     exporter = CodeExporter(redact=getattr(args, "redact", False))
 

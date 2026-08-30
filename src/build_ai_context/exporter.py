@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from build_ai_context import chunking, filetree, scanner, writing
+from build_ai_context import chunking, filetree, graph, scanner, writing
 from build_ai_context.constants import extract_timestamp_from_dir_name
 from build_ai_context.models import ExportConfig, ExportResult, FileChunk, SourceFile
 
@@ -156,6 +156,10 @@ class CodeExporter:
     def generate_filetree(self, files: Sequence[SourceFile], root: Path) -> str:
         """Generate a path-list filetree for AI assistants."""
         return filetree.generate_filetree(files, root)
+
+    def generate_graph(self, files: Sequence[SourceFile], root: Path) -> str:
+        """Generate a catalog + imports graph for AI assistants."""
+        return graph.generate_graph(files, root)
 
     update_gitignore = staticmethod(filetree.update_gitignore)
 
