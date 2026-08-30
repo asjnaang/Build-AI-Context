@@ -110,6 +110,13 @@ def build_parser() -> argparse.ArgumentParser:
         "Combine with --tree to write both artifacts.",
     )
     parser.add_argument(
+        "--format",
+        dest="output_format",
+        choices=["txt", "json"],
+        default="txt",
+        help="Graph output format (default: txt). Used with --graph.",
+    )
+    parser.add_argument(
         "--redact",
         action="store_true",
         default=False,
@@ -197,8 +204,12 @@ def run_quick_artifacts(args) -> int:
             wrote_any = True
 
         if getattr(args, "graph", False):
-            graph_content = exporter.generate_graph(all_files, root)
-            graph_name = f"{folder_name}_code_graph_{timestamp}.txt"
+            output_format = getattr(args, "output_format", "txt") or "txt"
+            graph_content = exporter.generate_graph(
+                all_files, root, output_format=output_format
+            )
+            ext = "json" if output_format == "json" else "txt"
+            graph_name = f"{folder_name}_code_graph_{timestamp}.{ext}"
             graph_path = root / graph_name
             graph_path.write_text(graph_content, encoding="utf-8")
             exporter.update_gitignore(root, graph_name)

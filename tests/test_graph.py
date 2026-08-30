@@ -43,9 +43,9 @@ class TestGraphCatalog:
 
         assert "catalog:" in text
         assert "app.py:" in text
-        assert "class: Greeter," in text
-        assert "fn: main," in text
-        assert "method: Greeter.hello," in text
+        assert "class: Greeter @" in text
+        assert "fn: main @" in text
+        assert "method: Greeter.hello @" in text
 
 
 class TestGraphImports:
@@ -102,8 +102,8 @@ class TestGraphOtherLanguages:
 
         text = generate_graph([app, util], tmp_path)
 
-        assert "fn: run," in text
-        assert "class: Svc," in text
+        assert "fn: run @" in text
+        assert "class: Svc @" in text
         assert "src/app.ts --> src/util.ts," in text
 
     def test_js_relative_import_prefers_same_language(self, tmp_path):
@@ -141,9 +141,9 @@ class TestGraphOtherLanguages:
 
         text = generate_graph([main, helper], tmp_path)
 
-        assert "class: MainActivity," in text
-        assert "method: MainActivity.onCreate," in text
-        assert "fn: helper," in text
+        assert "class: MainActivity @" in text
+        assert "method: MainActivity.onCreate @" in text
+        assert "fn: helper @" in text
         assert "MainActivity.kt --> " in text
         assert "com.example.Helper" in text or "Helper.kt" in text
         assert "android.os.Bundle" in text
@@ -164,8 +164,8 @@ class TestGraphOtherLanguages:
 
         text = generate_graph([src], tmp_path)
 
-        assert "struct: ContentView," in text
-        assert "fn: start," in text
+        assert "struct: ContentView @" in text
+        assert "fn: start @" in text
         assert "App/ContentView.swift --> SwiftUI," in text
 
 
@@ -182,7 +182,7 @@ class TestGraphFormat:
         assert "skipped: 1" in text
         assert "languages: python=1" in text
         assert "engine: ast" in text
-        assert "fn: main," in text
+        assert "fn: main @" in text
         assert "README.md" not in text.split("catalog:")[1]
 
     def test_no_icons_or_box_drawing(self, tmp_path):
@@ -204,7 +204,7 @@ class TestGraphCli:
         graphs = list(tmp_path.glob("*_code_graph_*.txt"))
         assert len(graphs) == 1
         content = graphs[0].read_text()
-        assert "fn: hello," in content
+        assert "fn: hello @" in content
         assert list(tmp_path.glob("*_file_tree_*.txt")) == []
 
     def test_tree_and_graph_write_both(self, tmp_path):
@@ -227,3 +227,102 @@ class TestGraphCli:
 
         gitignore = (tmp_path / ".gitignore").read_text()
         assert "*_code_graph_*.txt" in gitignore
+
+
+class TestGraphJson:
+    def test_json_format_is_parseable_and_has_same_facts(self, tmp_path):
+        """JSON is for tools; same catalog + imports, not a second invented graph."""
+        import json
+
+        src = _source(
+            tmp_path,
+            "app.py",
+            "class Greeter:\n    def hello(self):\n        return 1\n\ndef main():\n    pass\n",
+            "python",
+        )
+
+        raw = generate_graph([src], tmp_path, output_format="json")
+        data = json.loads(raw)
+
+        assert data["root"] == tmp_path.name
+        assert data["file_count"] == 1
+        assert data["parsed"] == 1
+        names = {(s["kind"], s["name"]) for f in data["catalog"] for s in f["symbols"]}
+        assert ("class", "Greeter") in names
+        assert ("fn", "main") in names
+        assert ("method", "Greeter.hello") in names
+
+    def test_default_format_is_txt_not_json(self, tmp_path):
+        src = _source(tmp_path, "app.py", "def main():\n    pass\n", "python")
+        text = generate_graph([src], tmp_path)
+        assert text.lstrip().startswith("root:")
+        assert not text.lstrip().startswith("{")
+
+    def test_invalid_format_raises(self, tmp_path):
+        src = _source(tmp_path, "app.py", "def main():\n    pass\n", "python")
+        try:
+            generate_graph([src], tmp_path, output_format="yaml")
+        except ValueError as exc:
+            assert "json" in str(exc) and "txt" in str(exc)
+        else:
+            raise AssertionError("expected ValueError for unknown format")
+
+
+class TestGraphRankAndLines:
+    def test_catalog_puts_imported_hubs_first(self, tmp_path):
+        """Aider-style PageRank: files many others import should lead the catalog."""
+        hub = _source(tmp_path, "hub.py", "def core():\n    return 1\n", "python")
+        leaf_a = _source(tmp_path, "aaa.py", "from hub import core\ndef a():\n    pass\n", "python")
+        leaf_b = _source(tmp_path, "bbb.py", "from hub import core\ndef b():\n    pass\n", "python")
+
+        text = generate_graph([leaf_a, leaf_b, hub], tmp_path)
+        catalog = text.split("catalog:")[1].split("imports:")[0]
+        assert catalog.find("hub.py:") < catalog.find("aaa.py:")
+        assert "rank:" in catalog
+
+    def test_symbols_include_definition_line(self, tmp_path):
+        src = _source(
+            tmp_path,
+            "app.py",
+            "class Greeter:\n    def hello(self):\n        return 1\n\ndef main():\n    pass\n",
+            "python",
+        )
+        text = generate_graph([src], tmp_path)
+        assert "class: Greeter @1," in text
+        assert "fn: main @5," in text
+        assert "method: Greeter.hello @2," in text
+
+
+class TestGraphCliFormat:
+    def test_format_json_writes_json_file(self, tmp_path):
+        import json
+
+        (tmp_path / "app.py").write_text("def hello():\n    return 1\n")
+        from build_ai_context.cli import build_parser, run_quick_artifacts
+
+        args = build_parser().parse_args(["--graph", "--format", "json", str(tmp_path)])
+        assert run_quick_artifacts(args) == 0
+
+        graphs = list(tmp_path.glob("*_code_graph_*.json"))
+        assert len(graphs) == 1
+        data = json.loads(graphs[0].read_text())
+        assert data["catalog"]
+        assert list(tmp_path.glob("*_code_graph_*.txt")) == []
+
+    def test_format_default_stays_txt(self, tmp_path):
+        (tmp_path / "app.py").write_text("def hello():\n    return 1\n")
+        from build_ai_context.cli import build_parser, run_quick_artifacts
+
+        args = build_parser().parse_args(["--graph", str(tmp_path)])
+        assert run_quick_artifacts(args) == 0
+        assert list(tmp_path.glob("*_code_graph_*.txt"))
+        assert list(tmp_path.glob("*_code_graph_*.json")) == []
+
+    def test_gitignore_covers_json_graphs(self, tmp_path):
+        (tmp_path / "app.py").write_text("def hello():\n    return 1\n")
+        from build_ai_context.cli import build_parser, run_quick_artifacts
+
+        args = build_parser().parse_args(["--graph", "--format", "json", str(tmp_path)])
+        assert run_quick_artifacts(args) == 0
+        gitignore = (tmp_path / ".gitignore").read_text()
+        assert "*_code_graph_*.json" in gitignore

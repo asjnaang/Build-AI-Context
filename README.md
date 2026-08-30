@@ -96,6 +96,7 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `project_root` | Directory to scan (default: current) | `baic /path/to/project` |
 | `--tree` | Generate filetree only, exit | `baic --tree .` |
 | `--graph` | Generate code graph only (catalog + imports), exit | `baic --graph .` |
+| `--format` | Graph file format: `txt` (default) or `json` | `--graph --format json` |
 | `--categories` | Export by category | `--categories python typescript` |
 | `--paths` | Export by path/filename | `--paths src tests` |
 | `--keywords` | Search in code content | `--keywords TODO FIXME` |
@@ -218,9 +219,12 @@ python: 1
 `baic --graph` writes a small map of the repo for AI agents: a per-file catalog of defs, plus import edges. Same flag style as `--tree`. One scan, then exit.
 
 ```bash
-# Graph only
+# Graph only (txt by default)
 baic --graph .
 baic --graph /path/to/project
+
+# Same facts as JSON
+baic --graph --format json .
 
 # Tree + graph, one scan
 baic --tree --graph .
@@ -240,15 +244,19 @@ languages: python=2, typescript=1
 
 catalog:
 src/cli.py:
-  fn: main,
-  fn: run_exporter,
+  rank: 0.4120,
+  fn: main @12,
+  fn: run_exporter @40,
 src/models.py:
-  class: SourceFile,
+  rank: 0.1881,
+  class: SourceFile @14,
 
 imports:
 src/cli.py --> src/exporter.py,
 src/cli.py --> src/models.py,
 ```
+
+Catalog files are ordered by PageRank on local import edges (same idea as Aider's repo map): hubs other files import show up first. Each def includes its line so an agent can jump there. `--format json` is the same payload for tools.
 
 This is not a full call graph. Local imports are resolved to project files when we can; third-party / stdlib names stay as module strings.
 
@@ -349,7 +357,7 @@ usage: build-ai-context [-h] [--max-file-lines N] [--output-dir OUTPUT_DIR]
                        [--non-interactive] [--categories [CATEGORIES ...]]
                        [--paths [PATHS ...]] [--keywords [KEYWORDS ...]]
                        [--include-secret-files] [--project-overview]
-                       [--tree] [--graph] [--redact] [--version]
+                       [--tree] [--graph] [--format {txt,json}] [--redact] [--version]
                        [project_root]
 
 positional arguments:
@@ -360,6 +368,7 @@ options:
   --version             Show version
   --tree                Generate filetree only and exit
   --graph               Generate code graph (catalog + imports) and exit
+  --format {txt,json}   Graph file format (default: txt)
   --redact              Redact secrets from output (default: disabled)
   --max-file-lines N    Skip repo source files with >= N lines (default: 3000;
                         0 disables the per-file limit). Output bundles are
