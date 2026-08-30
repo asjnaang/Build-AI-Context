@@ -25,7 +25,7 @@ CATEGORY_EXTENSIONS: Dict[str, Set[str]] = {
     "web_ui": {".html", ".css", ".scss", ".sass", ".less", ".vue", ".svelte"},
     "shell": {".sh", ".bash", ".zsh"},
     "flutter": {".dart"},
-    "config_docs": {".json", ".yaml", ".yml", ".xml", ".toml", ".graphql", ".gql", ".md", ".txt"},
+    "config_docs": {".json", ".yaml", ".yml", ".xml", ".toml", ".graphql", ".gql", ".md", ".txt", ".sql", ".csv"},
 }
 
 # Special filenames that should be included

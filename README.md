@@ -20,6 +20,9 @@ pip install build-ai-context
 # Interactive mode (recommended for first use)
 baic
 
+# Non-interactive - export everything supported
+baic . --all
+
 # Non-interactive - export specific categories
 baic . --non-interactive --categories python typescript
 ```
@@ -101,6 +104,7 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `--paths` | Export by path/filename | `--paths src tests` |
 | `--keywords` | Search in code content | `--keywords TODO FIXME` |
 | `--non-interactive` | Run without prompts | `--non-interactive` |
+| `--all` | Export everything supported without prompts | `baic . --all` |
 | `--max-file-lines` | Skip repo source files with ≥ N lines when bundling (default: 3000; `0` = no limit). Bundle output size stays fixed at 8000 lines. | `--max-file-lines 10000` |
 | `--output-dir` | Custom output folder | `--output-dir ./my-bundles` |
 | `--project-overview` | Generate architecture overview | `--project-overview` |
@@ -120,7 +124,7 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `web_ui` | `.html`, `.css`, `.scss`, `.vue`, `.svelte` |
 | `shell` | `.sh`, `.bash`, `.zsh` |
 | `flutter` | `.dart` |
-| `config_docs` | `.json`, `.yaml`, `.toml`, `.md` |
+| `config_docs` | `.json`, `.yaml`, `.toml`, `.md`, `.sql`, `.csv` |
 
 ### Category Aliases
 
@@ -285,8 +289,8 @@ Redaction targets: API keys, tokens, passwords, JWTs, AWS keys, GitHub tokens, e
 
 ### Large Files
 
-- **>= 1500 lines**: Exported with a warning (may need cleanup)
-- **>= 3000 lines**: Skipped automatically (shown separately for manual handling)
+- **>= 1500 lines**: Exported and reported under manifest `warnings`
+- **>= 3000 lines**: Excluded by default; interactive mode lets you select files to include anyway
 
 ### Secrets (Skipped by default, include with `--include-secret-files`)
 
