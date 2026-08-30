@@ -126,6 +126,11 @@ class TestCategoryDetection:
         f.touch()
         assert CodeExporter.detect_category(f) == "config_docs"
 
+    def test_detect_sql(self, tmp_path):
+        f = tmp_path / "schema.sql"
+        f.write_text("CREATE TABLE users (id INTEGER PRIMARY KEY);")
+        assert CodeExporter.detect_category(f) == "config_docs"
+
     def test_detect_unknown(self, tmp_path):
         f = tmp_path / "test.xyz"
         f.touch()
