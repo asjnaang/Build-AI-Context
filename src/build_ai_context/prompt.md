@@ -49,7 +49,7 @@ This prompt embeds the extractor so attachment slots remain available for data f
 Save the Python block below exactly as `extract_ai_context.py` beside the attachments. Absolute manifest paths, absolute wildcard patterns, and relative patterns are supported:
 
 ```bash
-python3 extract_ai_context.py --manifest /absolute/path/UDE_manifest_20260822T083415Z.json --output reconstructed-context
+python3 extract_ai_context.py --manifest /absolute/path/*_manifest_20260822T083415Z.json --output reconstructed-context
 python3 extract_ai_context.py --manifest '/absolute/path/*_manifest_*.json' --output reconstructed-context
 python3 extract_ai_context.py --manifest '*_manifest_*.json' --output reconstructed-context
 ```
@@ -62,7 +62,7 @@ Use `--force` only to replace a prior reconstruction of the same package. Python
 #!/usr/bin/env python3
 # No install needed: Python 3.10+ standard library only.
 # Attach: prompt.md, manifest_*.json, and bundle_001_*.txt (plus bundle_002_*.txt, etc. when named by the manifest).
-# The * is the generated project/timestamp portion, for example UDE_manifest_20260822T083415Z.json.
+# The * is the generated project/timestamp portion, for example *_manifest_20260822T083415Z.json.
 # Run beside the attachments:
 #   python3 extract_ai_context.py --manifest 'manifest_*.json' --output reconstructed-context
 # Project-prefixed manifests also work:
