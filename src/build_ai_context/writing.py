@@ -207,6 +207,7 @@ def write_bundles_and_manifest(
     timestamp: Optional[str] = None,
     redact: bool = False,
     max_file_lines: Optional[int] = None,
+    warnings: Sequence[Dict[str, object]] = (),
 ) -> Path:
     """Write bundles and manifest to the output directory."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -232,8 +233,10 @@ def write_bundles_and_manifest(
             "selected_total_bytes": sum(item.size_bytes for item in selected_files),
             "skipped_counts": skipped_reasons,
             "skipped_during_pack_count": len(skipped_during_pack),
+            "warning_count": len(warnings),
         },
         "skipped_during_pack": list(skipped_during_pack),
+        "warnings": list(warnings),
         "bundles": [],
     }
 

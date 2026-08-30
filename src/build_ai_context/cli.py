@@ -16,6 +16,7 @@ from build_ai_context.cli_ui import (
     prompt_yes_no,
     render_category_table,
     render_folder_table,
+    select_oversized_files_for_inclusion,
 )
 from build_ai_context.constants import (
     CATEGORY_DESCRIPTIONS,
@@ -64,6 +65,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--non-interactive",
         action="store_true",
         help="Run without prompts. Optionally combine with --categories and/or --paths.",
+    )
+    parser.add_argument(
+        "--all",
+        dest="non_interactive",
+        action="store_true",
+        help="Export all supported files without prompts.",
     )
     parser.add_argument(
         "--categories",
@@ -307,11 +314,31 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             f"Selected {len(selected_files)} file(s) out of {len(all_files)} supported file(s)."
         )
 
-        chunks, skipped_during_split = exporter.split_into_chunks(
+        chunks, split_items = exporter.split_into_chunks(
             selected_files,
             bundle_max_lines,
             max_file_lines=args.max_file_lines,
         )
+        warnings = [item for item in split_items if item.get("reason") == "large_file_warning"]
+        skipped_during_split = [
+            item for item in split_items if item.get("reason") != "large_file_warning"
+        ]
+        if not args.non_interactive:
+            forced_files = select_oversized_files_for_inclusion(
+                selected_files, skipped_during_split, exporter
+            )
+            if forced_files:
+                forced_paths = {source.rel_path.as_posix() for source in forced_files}
+                forced_chunks, forced_items = exporter.split_into_chunks(
+                    forced_files, bundle_max_lines, max_file_lines=0
+                )
+                chunks.extend(forced_chunks)
+                warnings.extend(
+                    item for item in forced_items if item.get("reason") == "large_file_warning"
+                )
+                skipped_during_split = [
+                    item for item in skipped_during_split if item.get("path") not in forced_paths
+                ]
         bundles, skipped_during_pack = exporter.pack_chunks(chunks, bundle_max_lines)
         skipped_during_processing = skipped_during_split + skipped_during_pack
 
@@ -343,6 +370,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             selection_metadata=selection_metadata,
             skip_secret_files=skip_secret_files,
             skipped_during_pack=skipped_during_processing,
+            warnings=warnings,
             filetree_name=filetree_name,
             filetree_content=filetree_content,
             timestamp=timestamp,
@@ -367,8 +395,12 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         exporter.print_success(f"Bundles created  : {len(bundles)}")
         exporter.print_success(f"Files exported   : {len(selected_files)}")
 
+        if warnings:
+            exporter.print_warning("\nFiles included with warnings:")
+            for entry in warnings:
+                exporter.print_warning(f"  - {entry}")
         if skipped_during_processing:
-            exporter.print_warning("\nFiles/chunks skipped during processing:")
+            exporter.print_warning("\nFiles/chunks excluded during processing:")
             for entry in skipped_during_processing:
                 exporter.print_warning(f"  - {entry}")
 
