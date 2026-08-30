@@ -124,7 +124,7 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `web_ui` | `.html`, `.css`, `.scss`, `.vue`, `.svelte` |
 | `shell` | `.sh`, `.bash`, `.zsh` |
 | `flutter` | `.dart` |
-| `config_docs` | `.json`, `.yaml`, `.toml`, `.md`, `.sql` |
+| `config_docs` | `.json`, `.yaml`, `.toml`, `.md`, `.sql`, `.csv` |
 
 ### Category Aliases
 
