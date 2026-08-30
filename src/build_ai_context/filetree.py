@@ -25,7 +25,7 @@ def generate_filetree(files: Sequence[SourceFile], root: Path) -> str:
     type_counts: Dict[str, int] = defaultdict(int)
     for source in files:
         type_counts[source.category] += 1
-    root_path = str(root)
+    root_path = root.name.replace(" ", "_") or "project"
     lines: List[str] = [
         f"root: {root_path}",
         f"file_count: {len(paths)}",
