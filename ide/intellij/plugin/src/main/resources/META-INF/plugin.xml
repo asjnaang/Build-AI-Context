@@ -1,11 +1,18 @@
-<idea-plugin>
+<idea-plugin url="https://github.com/asjnaang/Build-AI-Context">
     <id>com.asjnaang.buildaicontext</id>
     <name>Build AI Context</name>
-    <vendor>ASJN</vendor>
+    <vendor url="https://github.com/asjnaang/Build-AI-Context">ASJN</vendor>
     <description><![CDATA[
-      Scan a project, filter files, and export AI-readable source bundles without Python.
-      Selection is composed filters plus a checkbox tree; oversized files are shown unchecked by default.
+      <p>Scan a project, filter files, and export AI-readable source bundles without installing Python.</p>
+      <p>Selection is composed filters plus a checkbox tree. Oversized files are shown unchecked by default.
+      Export writes bundles, a manifest, and an Agent Contract (<code>prompt.md</code>).</p>
+      <p>Works on IntelliJ IDEA, Android Studio, WebStorm, PyCharm, and other IntelliJ Platform IDEs
+      (depends on <code>com.intellij.modules.platform</code> only).</p>
     ]]></description>
+    <change-notes><![CDATA[
+      <p>0.1.0 — first Host: Scan, Export, Add to AI Context, Generate Filetree / Code Graph.
+      Restricted writes stay in the project. Secrets require a confirm dialog.</p>
+    ]]></change-notes>
     <depends>com.intellij.modules.platform</depends>
 
     <extensions defaultExtensionNs="com.intellij">

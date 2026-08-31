@@ -5,11 +5,28 @@
   "version": "0.1.0",
   "publisher": "asjnaang",
   "license": "MIT",
+  "icon": "media/icon.png",
+  "pricing": "Free",
+  "homepage": "https://github.com/asjnaang/Build-AI-Context",
+  "bugs": {
+    "url": "https://github.com/asjnaang/Build-AI-Context/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/asjnaang/Build-AI-Context.git"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
   "categories": [
     "Other"
+  ],
+  "keywords": [
+    "ai",
+    "context",
+    "export",
+    "bundle",
+    "prompt"
   ],
   "activationEvents": [
     "onView:baic.filters",
@@ -249,7 +266,7 @@
   },
   "scripts": {
     "compile": "mkdir -p resources && cp ../policy/policy.json ../engine-ts/prompt.md resources/ && esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
-    "package": "npm run compile && vsce package --allow-missing-repository",
+    "package": "npm run compile && vsce package",
     "test": "npm run compile && node --import tsx --test test/*.test.ts"
   },
   "devDependencies": {

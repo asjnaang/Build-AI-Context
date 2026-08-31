@@ -11,7 +11,7 @@ Developers who cannot install Python can use the same Export workflow from the e
 - **VS Code** — [`ide/vscode`](ide/vscode) (`npm --prefix ide/vscode run package`, then *Install from VSIX…*)
 - **IntelliJ Platform** — [`ide/intellij/plugin`](ide/intellij/plugin) (Gradle `:plugin:buildPlugin`; loads in IntelliJ IDEA, Android Studio, WebStorm, PyCharm, and other platform IDEs)
 
-These Hosts are not on the marketplaces yet. Package locally; do not require `pip`.
+These Hosts are not on the marketplaces yet. Package locally; do not require `pip`. Human publish steps: [`developer_pending.md`](developer_pending.md).
 
 ## Why use this?
 

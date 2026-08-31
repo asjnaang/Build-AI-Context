@@ -28,6 +28,13 @@ jobs:
       - name: VS Code compile and tests
         working-directory: ide/vscode
         run: npm ci && npm test
+      - name: Package VSIX (artifact only; do not publish)
+        working-directory: ide/vscode
+        run: npm run package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vscode-vsix
+          path: ide/vscode/*.vsix
 
   intellij-engine:
     runs-on: ubuntu-latest
@@ -37,12 +44,14 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
+          cache: gradle
       - name: Kotlin engine tests
         working-directory: ide/intellij
-        run: |
-          if [ -f gradlew ]; then
-            ./gradlew :engine:test --no-daemon
-          else
-            echo "IntelliJ Gradle project not present yet"
-            exit 1
-          fi
+        run: ./gradlew :engine:test --no-daemon
+      - name: Package plugin zip (artifact only; do not publish)
+        working-directory: ide/intellij
+        run: ./gradlew :plugin:buildPlugin --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: intellij-plugin-zip
+          path: ide/intellij/plugin/build/distributions/plugin-0.1.0.zip
