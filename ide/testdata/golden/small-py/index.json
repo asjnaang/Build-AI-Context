@@ -1,0 +1,12 @@
+{
+  "files": [
+    "bundle.txt",
+    "filetree.txt",
+    "graph.json",
+    "graph.txt",
+    "manifest.json",
+    "prompt.md",
+    "small-py_bundle_001_TIMESTAMP.txt",
+    "small-py_manifest_TIMESTAMP.json"
+  ]
+}

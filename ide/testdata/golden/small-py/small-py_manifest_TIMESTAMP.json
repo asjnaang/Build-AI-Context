@@ -1,0 +1,103 @@
+{
+  "tool": "build-ai-context",
+  "created_at_utc": "TIMESTAMP",
+  "project_root": "/privatePROJECT_ROOT",
+  "max_lines_per_bundle": 8000,
+  "max_file_lines": 3000,
+  "bundle_count": 1,
+  "skip_secret_like_files": true,
+  "selection": {
+    "selection_mode": "non_interactive",
+    "selected_categories": [],
+    "selected_paths": [],
+    "name_filters": [],
+    "missing_paths": []
+  },
+  "selected_files": [
+    "README.md",
+    "main.py",
+    "src/util.py"
+  ],
+  "filetree": "small-py_file_tree_TIMESTAMP.txt",
+  "summary": {
+    "selected_file_count": 3,
+    "selected_total_lines": 15,
+    "selected_total_bytes": 214,
+    "skipped_counts": {
+      "default_excluded_dir": 1,
+      "secret_like_file": 1,
+      "unsupported_type": 1
+    },
+    "skipped_during_pack_count": 0,
+    "warning_count": 0
+  },
+  "skipped_during_pack": [],
+  "warnings": [],
+  "bundles": [
+    {
+      "bundle": "small-py_bundle_001_TIMESTAMP.txt",
+      "files": [
+        {
+          "path": "small-py_file_tree_TIMESTAMP.txt",
+          "category": "filetree",
+          "size_bytes": 102,
+          "sha256": "",
+          "total_file_lines": 17,
+          "chunk_index": 1,
+          "chunk_count": 1,
+          "file_start_line": 1,
+          "file_end_line": 17,
+          "file_line_count": 17,
+          "bundle_start_line": 1,
+          "bundle_end_line": 17,
+          "bundle_line_count": 17
+        },
+        {
+          "path": "README.md",
+          "category": "config_docs",
+          "size_bytes": 65,
+          "sha256": "56ce0b81eb09bea87ff05ea656ad1c2a24d5b0894695ca8eb2d92a4abbd4c86e",
+          "total_file_lines": 3,
+          "chunk_index": 1,
+          "chunk_count": 1,
+          "file_start_line": 1,
+          "file_end_line": 3,
+          "file_line_count": 3,
+          "bundle_start_line": 18,
+          "bundle_end_line": 30,
+          "bundle_line_count": 13
+        },
+        {
+          "path": "main.py",
+          "category": "python",
+          "size_bytes": 119,
+          "sha256": "4795354f7fd27ec85d63140bb9212996874ae24f49ea6ed8cf012dafa5774885",
+          "total_file_lines": 10,
+          "chunk_index": 1,
+          "chunk_count": 1,
+          "file_start_line": 1,
+          "file_end_line": 10,
+          "file_line_count": 10,
+          "bundle_start_line": 31,
+          "bundle_end_line": 50,
+          "bundle_line_count": 20
+        },
+        {
+          "path": "src/util.py",
+          "category": "python",
+          "size_bytes": 30,
+          "sha256": "6df6aaa096e093be35ace3363de9d14364b07d3f873817b882032278ef212038",
+          "total_file_lines": 2,
+          "chunk_index": 1,
+          "chunk_count": 1,
+          "file_start_line": 1,
+          "file_end_line": 2,
+          "file_line_count": 2,
+          "bundle_start_line": 51,
+          "bundle_end_line": 62,
+          "bundle_line_count": 12
+        }
+      ]
+    }
+  ]
+}
