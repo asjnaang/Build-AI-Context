@@ -47,7 +47,13 @@ intellijPlatform {
         }
         vendor {
             name = "ASJN"
+            url = "https://github.com/asjnaang/Build-AI-Context"
         }
+        changeNotes.set(
+            """
+            <p>0.1.0 — first Host: Scan, Export, Add to AI Context, Generate Filetree / Code Graph.</p>
+            """.trimIndent(),
+        )
     }
     instrumentCode = false
     buildSearchableOptions = false
