@@ -14,13 +14,27 @@ import { writeProjectOverview } from "./overview.ts";
 import { loadPolicy } from "./policy.ts";
 import type { Catalog, ExportOptions, ExportResult, FileChunk, Selection, SourceFile } from "./types.ts";
 
+let promptPathOverride: string | undefined;
+
+export function setPromptPath(path: string): void {
+  promptPathOverride = path;
+}
+
 function promptMd(): string {
   const here = dirname(fileURLToPath(import.meta.url));
-  try {
-    return readFileSync(join(here, "..", "prompt.md"), "utf8");
-  } catch {
-    return "";
+  const candidates = [
+    promptPathOverride,
+    join(here, "..", "prompt.md"),
+    join(here, "prompt.md"),
+  ].filter((p): p is string => Boolean(p));
+  for (const candidate of candidates) {
+    try {
+      return readFileSync(candidate, "utf8");
+    } catch {
+      /* try next */
+    }
   }
+  return "";
 }
 
 export async function exportCatalog(
