@@ -4,7 +4,7 @@ import { basename, extname, join, relative, resolve, sep } from "node:path";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
 import { loadPolicy } from "./policy.ts";
-import type { Catalog, ScanOptions, SourceFile } from "./types.ts";
+import { EngineCanceled, type Catalog, type ScanOptions, type SourceFile } from "./types.ts";
 
 export function detectCategory(filePath: string): string | undefined {
   const policy = loadPolicy();
@@ -36,7 +36,7 @@ function posixRel(rel: string): string {
   return rel.split(sep).join("/");
 }
 
-function pathMatchesAnyPattern(relPath: string, patterns: string[]): boolean {
+export function pathMatchesAnyPattern(relPath: string, patterns: string[]): boolean {
   const name = basename(relPath);
   return patterns.some((pattern) => minimatch(relPath, pattern) || minimatch(name, pattern));
 }
@@ -70,13 +70,24 @@ export function splitLines(text: string): string[] {
   return lines;
 }
 
-function readTextLines(absPath: string): string[] {
-  const buf = readFileSync(absPath);
-  const tries: BufferEncoding[] = ["utf8", "latin1"];
-  for (const encoding of tries) {
-    return splitLines(buf.toString(encoding));
+function decodeText(buf: Buffer): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buf);
+  } catch {
+    /* utf-8-sig: skip BOM then strict utf-8 */
   }
-  return splitLines(buf.toString("utf8"));
+  try {
+    const rest =
+      buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf ? buf.subarray(3) : buf;
+    return new TextDecoder("utf-8", { fatal: true }).decode(rest);
+  } catch {
+    /* latin-1 never fails */
+  }
+  return buf.toString("latin1");
+}
+
+function readTextLines(absPath: string): string[] {
+  return splitLines(decodeText(readFileSync(absPath)));
 }
 
 export function sha256OfLines(lines: string[]): string {
@@ -131,6 +142,7 @@ export async function scan(workspace: string, options: ScanOptions): Promise<Cat
   };
 
   for (const abs of walkFiles(root)) {
+    if (options.isCanceled?.()) throw new EngineCanceled();
     const rel = posixRel(relative(root, abs));
     if (shouldSkipByDir(rel, policy.defaultExcludedDirs)) {
       bump("default_excluded_dir");

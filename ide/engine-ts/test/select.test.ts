@@ -38,3 +38,16 @@ test("name filter util", async () => {
   const selection = select(catalog, { categories: [], paths: [], nameFilters: ["util"], keywords: [] });
   assert.deepEqual(selection.files.map((f) => f.relPath), ["src/util.py"]);
 });
+
+test("explicit empty category set selects zero files", async () => {
+  const catalog = await scan(root, { includeSecretFiles: false });
+  const selection = select(catalog, {
+    categories: [],
+    categoriesConstrained: true,
+    paths: [],
+    nameFilters: [],
+    keywords: [],
+  });
+  assert.equal(selection.files.length, 0);
+  assert.equal(selection.metadata.selectionMode, "composed");
+});

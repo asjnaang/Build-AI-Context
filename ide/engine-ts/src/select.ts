@@ -161,13 +161,16 @@ export function filterFilesByKeywords(
 export function select(catalog: Catalog, filters: Filters): Selection {
   const policy = loadPolicy();
   let selected = [...catalog.files];
+  const constrainedEmpty = filters.categoriesConstrained === true && filters.categories.length === 0;
   const hasCat = filters.categories.length > 0;
   const hasPath = filters.paths.length > 0;
   const hasName = filters.nameFilters.length > 0;
   const hasKw = filters.keywords.length > 0;
 
   let selectedCategories: string[] = [];
-  if (hasCat) {
+  if (constrainedEmpty) {
+    selected = [];
+  } else if (hasCat) {
     selectedCategories = normalizeCategories(filters.categories);
     const invalid = filters.categories.filter((item) => {
       const key = item.trim().toLowerCase();
@@ -201,7 +204,7 @@ export function select(catalog: Catalog, filters: Filters): Selection {
   }
 
   selected.sort((a, b) => (a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0));
-  const anyFilter = hasCat || hasPath || hasName || hasKw;
+  const anyFilter = hasCat || constrainedEmpty || hasPath || hasName || hasKw;
   return {
     files: selected,
     metadata: {

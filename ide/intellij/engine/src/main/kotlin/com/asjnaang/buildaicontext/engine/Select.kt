@@ -139,13 +139,16 @@ fun filterFilesByKeywords(
 fun select(catalog: Catalog, filters: Filters): Selection {
     val policy = loadPolicy()
     var selected = catalog.files.toList()
+    val constrainedEmpty = filters.categoriesConstrained && filters.categories.isEmpty()
     val hasCat = filters.categories.isNotEmpty()
     val hasPath = filters.paths.isNotEmpty()
     val hasName = filters.nameFilters.isNotEmpty()
     val hasKw = filters.keywords.isNotEmpty()
 
     var selectedCategories = emptyList<String>()
-    if (hasCat) {
+    if (constrainedEmpty) {
+        selected = emptyList()
+    } else if (hasCat) {
         selectedCategories = normalizeCategories(filters.categories)
         val invalid = filters.categories.filter { item ->
             val key = item.trim().lowercase()
@@ -179,7 +182,7 @@ fun select(catalog: Catalog, filters: Filters): Selection {
     }
 
     selected = selected.sortedWith { a, b -> a.relPath.compareTo(b.relPath) }
-    val anyFilter = hasCat || hasPath || hasName || hasKw
+    val anyFilter = hasCat || constrainedEmpty || hasPath || hasName || hasKw
     return Selection(
         files = selected,
         metadata = SelectionMetadata(

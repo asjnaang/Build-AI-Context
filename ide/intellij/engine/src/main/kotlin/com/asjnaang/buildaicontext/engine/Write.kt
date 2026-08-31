@@ -4,16 +4,28 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
 
+private fun throwIfCanceled(isCanceled: () -> Boolean) {
+    if (isCanceled()) throw EngineCanceled()
+}
+
 fun exportCatalog(catalog: Catalog, selection: Selection, options: ExportOptions): ExportResult {
+    throwIfCanceled(options.isCanceled)
     val policy = loadPolicy()
     val root = catalog.workspace
+    val files = if (options.includeSecretFiles) {
+        selection.files
+    } else {
+        selection.files.filterNot { pathMatchesAnyPattern(it.relPath, policy.defaultSecretPatterns) }
+    }
+    val effective = selection.copy(files = files)
     val maxLines = policy.bundleMaxLines
     val (chunks, splitSkipped) = splitIntoChunks(
-        selection.files,
+        effective.files,
         maxLines,
         options.redact,
         options.maxFileLines,
     )
+    throwIfCanceled(options.isCanceled)
     val warnings = splitSkipped.filter { it["reason"] == "large_file_warning" }
     val skippedDuringSplit = splitSkipped.filter { it["reason"] != "large_file_warning" }
     val (packedBundles, packedSkipped) = packChunks(chunks, maxLines, options.redact)
@@ -30,9 +42,8 @@ fun exportCatalog(catalog: Catalog, selection: Selection, options: ExportOptions
     val filetreeContent = generateFiletree(catalog.files, root)
     val folderName = Path.of(root).fileName.toString().replace(" ", "_")
     val filetreeName = "${folderName}_file_tree_$timestamp.txt"
-    if (options.updateGitignore) updateGitignore(root, filetreeName)
 
-    val sourceLookup = selection.files.associateBy { it.relPath }
+    val sourceLookup = effective.files.associateBy { it.relPath }
     val manifest = linkedMapOf<String, Any?>(
         "tool" to "build-ai-context",
         "created_at_utc" to Instant.now().toString(),
@@ -40,7 +51,7 @@ fun exportCatalog(catalog: Catalog, selection: Selection, options: ExportOptions
         "max_lines_per_bundle" to maxLines,
         "max_file_lines" to options.maxFileLines,
         "bundle_count" to packedBundles.size,
-        "skip_secret_like_files" to true,
+        "skip_secret_like_files" to !options.includeSecretFiles,
         "selection" to linkedMapOf(
             "selection_mode" to selection.metadata.selectionMode,
             "selected_categories" to selection.metadata.selectedCategories,
@@ -48,12 +59,12 @@ fun exportCatalog(catalog: Catalog, selection: Selection, options: ExportOptions
             "name_filters" to selection.metadata.nameFilters,
             "missing_paths" to selection.metadata.missingPaths,
         ),
-        "selected_files" to selection.files.map { it.relPath },
+        "selected_files" to effective.files.map { it.relPath },
         "filetree" to filetreeName,
         "summary" to linkedMapOf(
-            "selected_file_count" to selection.files.size,
-            "selected_total_lines" to selection.files.sumOf { it.lineCount },
-            "selected_total_bytes" to selection.files.sumOf { it.sizeBytes },
+            "selected_file_count" to effective.files.size,
+            "selected_total_lines" to effective.files.sumOf { it.lineCount },
+            "selected_total_bytes" to effective.files.sumOf { it.sizeBytes },
             "skipped_counts" to catalog.skipped,
             "skipped_during_pack_count" to skippedDuringPack.size,
             "warning_count" to warnings.size,
@@ -67,7 +78,9 @@ fun exportCatalog(catalog: Catalog, selection: Selection, options: ExportOptions
     Files.writeString(promptPath, loadPromptMd())
 
     val bundlePaths = ArrayList<String>()
+    val exportedRels = LinkedHashSet<String>()
     packedBundles.forEachIndexed { index0, bundle ->
+        throwIfCanceled(options.isCanceled)
         val index = index0 + 1
         val bundleName = "${folderName}_bundle_${index.toString().padStart(3, '0')}_$timestamp.txt"
         val bundlePath = outDir.resolve(bundleName)
@@ -102,7 +115,9 @@ fun exportCatalog(catalog: Catalog, selection: Selection, options: ExportOptions
         }
 
         for (chunk in bundle) {
+            throwIfCanceled(options.isCanceled)
             val source = sourceLookup[chunk.relPath] ?: continue
+            exportedRels.add(chunk.relPath)
             val blockText = renderChunkBlock(chunk, options.redact)
             val blockLineCount = splitLines(blockText).size
             val bundleStartLine = nextBundleLine
@@ -143,7 +158,7 @@ fun exportCatalog(catalog: Catalog, selection: Selection, options: ExportOptions
         overviewPath = writeProjectOverview(
             root,
             catalog.files,
-            selection.files,
+            effective.files,
             outDir.toString(),
             selection.metadata,
             manifestName,
@@ -152,10 +167,14 @@ fun exportCatalog(catalog: Catalog, selection: Selection, options: ExportOptions
 
     var graphPath: String? = null
     if (!options.writeGraph.isNullOrBlank()) {
+        throwIfCanceled(options.isCanceled)
         val content = generateGraph(catalog.files, root, options.writeGraph)
         graphPath = outDir.resolve("${folderName}_code_graph_$timestamp.${options.writeGraph}").toString()
         Files.writeString(Path.of(graphPath), content)
     }
+
+    throwIfCanceled(options.isCanceled)
+    if (options.updateGitignore) updateGitignore(root, filetreeName)
 
     return ExportResult(
         outputDir = outDir.toString(),
@@ -165,29 +184,29 @@ fun exportCatalog(catalog: Catalog, selection: Selection, options: ExportOptions
         graphPath = graphPath,
         overviewPath = overviewPath,
         promptPath = promptPath.toString(),
-        filesExported = selection.files.size,
+        filesExported = exportedRels.size,
         bundlesCreated = packedBundles.size,
         warnings = warnings,
         skippedDuringPack = skippedDuringPack,
     )
 }
 
-fun writeStandaloneFiletree(catalog: Catalog): String {
+fun writeStandaloneFiletree(catalog: Catalog, shouldUpdateGitignore: Boolean = true): String {
     val timestamp = generateTimestamp()
     val folderName = Path.of(catalog.workspace).fileName.toString().replace(" ", "_")
     val name = "${folderName}_file_tree_$timestamp.txt"
     val path = Path.of(catalog.workspace).resolve(name)
     Files.writeString(path, generateFiletree(catalog.files, catalog.workspace))
-    updateGitignore(catalog.workspace, name)
+    if (shouldUpdateGitignore) updateGitignore(catalog.workspace, name)
     return path.toString()
 }
 
-fun writeStandaloneGraph(catalog: Catalog, format: String): String {
+fun writeStandaloneGraph(catalog: Catalog, format: String, shouldUpdateGitignore: Boolean = true): String {
     val timestamp = generateTimestamp()
     val folderName = Path.of(catalog.workspace).fileName.toString().replace(" ", "_")
     val name = "${folderName}_code_graph_$timestamp.$format"
     val path = Path.of(catalog.workspace).resolve(name)
     Files.writeString(path, generateGraph(catalog.files, catalog.workspace, format))
-    updateGitignore(catalog.workspace, name)
+    if (shouldUpdateGitignore) updateGitignore(catalog.workspace, name)
     return path.toString()
 }

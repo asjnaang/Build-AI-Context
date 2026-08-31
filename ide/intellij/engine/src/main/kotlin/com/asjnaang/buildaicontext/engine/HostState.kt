@@ -30,8 +30,34 @@ class HostState(
     }
 
     fun toggleCategory(category: String) {
-        val i = filters.categories.indexOf(category)
-        if (i >= 0) filters.categories.removeAt(i) else filters.categories.add(category)
+        val catalog = this.catalog ?: return
+        val all = catalog.files.map { it.category }.distinct()
+        if (!filters.categoriesConstrained) {
+            filters.categoriesConstrained = true
+            filters.categories.clear()
+            filters.categories.addAll(all.filter { it != category })
+        } else {
+            val i = filters.categories.indexOf(category)
+            if (i >= 0) filters.categories.removeAt(i) else filters.categories.add(category)
+        }
+        applyScan(catalog)
+    }
+
+    fun categoryChecked(category: String): Boolean {
+        if (!filters.categoriesConstrained) return true
+        return category in filters.categories
+    }
+
+    fun exportMaxFileLines(): Int {
+        if (maxFileLines <= 0) return 0
+        val files = exportSelection().files
+        if (files.any { it.lineCount >= maxFileLines }) return 0
+        return maxFileLines
+    }
+
+    fun setPaths(raw: String) {
+        filters.paths.clear()
+        filters.paths.addAll(raw.split(Regex("[,;\\s]+")).map { it.trim() }.filter { it.isNotEmpty() })
         catalog?.let { applyScan(it) }
     }
 
@@ -54,6 +80,12 @@ class HostState(
 
     fun clearFilters() {
         filters = Filters()
+        catalog?.let { applyScan(it) }
+    }
+
+    fun selectAllCategories() {
+        filters.categories.clear()
+        filters.categoriesConstrained = false
         catalog?.let { applyScan(it) }
     }
 }
