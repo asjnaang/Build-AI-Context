@@ -8,8 +8,8 @@ Export source code and project files into AI-friendly text bundles with a compac
 
 Developers who cannot install Python can use the same Export workflow from the editor:
 
-- **VS Code** — [`ide/vscode`](ide/vscode) (`npm --prefix ide/vscode run compile`, then *Install from VSIX…*)
-- **IntelliJ Platform** — [`ide/intellij`](ide/intellij) (Gradle `buildPlugin`; loads in IntelliJ IDEA, Android Studio, WebStorm, PyCharm, and other platform IDEs)
+- **VS Code** — [`ide/vscode`](ide/vscode) (`npm --prefix ide/vscode run package`, then *Install from VSIX…*)
+- **IntelliJ Platform** — [`ide/intellij/plugin`](ide/intellij/plugin) (Gradle `:plugin:buildPlugin`; loads in IntelliJ IDEA, Android Studio, WebStorm, PyCharm, and other platform IDEs)
 
 These Hosts are not on the marketplaces yet. Package locally; do not require `pip`.
 
