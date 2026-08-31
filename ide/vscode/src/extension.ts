@@ -48,8 +48,8 @@ class ArtifactItem extends vscode.TreeItem {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-  setPolicyPath(join(context.extensionPath, "..", "policy", "policy.json"));
-  setPromptPath(join(context.extensionPath, "..", "engine-ts", "prompt.md"));
+  setPolicyPath(join(context.extensionPath, "resources", "policy.json"));
+  setPromptPath(join(context.extensionPath, "resources", "prompt.md"));
 
   const state: HostState = createState(
     vscode.workspace.getConfiguration("baic").get<number>("maxFileLines") ?? 3000,

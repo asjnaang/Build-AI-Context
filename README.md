@@ -4,6 +4,15 @@ Export source code and project files into AI-friendly text bundles with a compac
 
 **Commands:** `build-ai-context` or `baic` (short alias)
 
+## IDE Hosts (preview)
+
+Developers who cannot install Python can use the same Export workflow from the editor:
+
+- **VS Code** — [`ide/vscode`](ide/vscode) (`npm --prefix ide/vscode run compile`, then *Install from VSIX…*)
+- **IntelliJ Platform** — [`ide/intellij`](ide/intellij) (Gradle `buildPlugin`; loads in IntelliJ IDEA, Android Studio, WebStorm, PyCharm, and other platform IDEs)
+
+These Hosts are not on the marketplaces yet. Package locally; do not require `pip`.
+
 ## Why use this?
 
 - **AI-Ready Output**: Bundles include metadata (file paths, line numbers, categories) so AI can precisely reference your code

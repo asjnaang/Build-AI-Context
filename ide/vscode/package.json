@@ -127,7 +127,7 @@
     ]
   },
   "scripts": {
-    "compile": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "compile": "mkdir -p resources && cp ../policy/policy.json ../engine-ts/prompt.md resources/ && esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
     "package": "npm run compile && npx --yes @vscode/vsce package --allow-missing-repository --skip-license",
     "test": "npm run compile && node --import tsx --test test/*.test.ts"
   },
