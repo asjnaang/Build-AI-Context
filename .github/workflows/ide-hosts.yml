@@ -1,0 +1,48 @@
+name: ide-hosts
+
+on:
+  push:
+    paths:
+      - "ide/**"
+      - "src/build_ai_context/constants.py"
+      - "tests/test_policy_lock.py"
+      - ".github/workflows/ide-hosts.yml"
+  pull_request:
+
+jobs:
+  policy-and-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Policy lock
+        run: PYTHONPATH=src python -m pytest tests/test_policy_lock.py -q
+      - name: TypeScript engine
+        working-directory: ide/engine-ts
+        run: npm ci && npm test
+      - name: VS Code compile and tests
+        working-directory: ide/vscode
+        run: npm ci && npm test
+
+  intellij-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Kotlin engine tests
+        working-directory: ide/intellij
+        run: |
+          if [ -f gradlew ]; then
+            ./gradlew :engine:test --no-daemon
+          else
+            echo "IntelliJ Gradle project not present yet"
+            exit 1
+          fi
