@@ -1,0 +1,141 @@
+{
+  "name": "build-ai-context",
+  "displayName": "Build AI Context",
+  "description": "Export a workspace into AI-readable text bundles without Python.",
+  "version": "0.1.0",
+  "publisher": "asjnaang",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onView:baic.filters",
+    "onCommand:baic.scan",
+    "onCommand:baic.export"
+  ],
+  "main": "./dist/extension.js",
+  "extensionKind": ["workspace"],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Export is disabled until the workspace is trusted."
+    }
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "baic",
+          "title": "AI Context",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "baic": [
+        {
+          "id": "baic.filters",
+          "name": "Filters"
+        },
+        {
+          "id": "baic.files",
+          "name": "Files"
+        },
+        {
+          "id": "baic.export",
+          "name": "Export"
+        }
+      ]
+    },
+    "commands": [
+      { "command": "baic.scan", "title": "Build AI Context: Scan" },
+      { "command": "baic.export", "title": "Build AI Context: Export" },
+      { "command": "baic.refresh", "title": "Build AI Context: Refresh" },
+      { "command": "baic.addCurrentFile", "title": "Build AI Context: Add Current File" },
+      { "command": "baic.addExplorerPath", "title": "Add to AI Context" },
+      { "command": "baic.setKeyword", "title": "Build AI Context: Set Keyword" },
+      { "command": "baic.clearFilters", "title": "Build AI Context: Clear Filters" },
+      { "command": "baic.selectAllSupported", "title": "Build AI Context: Select All Supported" },
+      { "command": "baic.generateFiletree", "title": "Build AI Context: Generate Filetree" },
+      { "command": "baic.generateGraph", "title": "Build AI Context: Generate Code Graph" },
+      { "command": "baic.openLastExport", "title": "Build AI Context: Open Last Export" },
+      { "command": "baic.openAgentContract", "title": "Build AI Context: Open Agent Contract" },
+      { "command": "baic.toggleRedact", "title": "Build AI Context: Toggle Redact" }
+    ],
+    "menus": {
+      "explorer/context": [
+        { "command": "baic.addExplorerPath", "group": "baic@1" }
+      ],
+      "editor/context": [
+        { "command": "baic.addCurrentFile", "group": "baic@1" }
+      ],
+      "view/title": [
+        { "command": "baic.scan", "when": "view == baic.filters", "group": "navigation" },
+        { "command": "baic.export", "when": "view == baic.files", "group": "navigation" },
+        { "command": "baic.refresh", "when": "view == baic.files", "group": "navigation" }
+      ]
+    },
+    "configuration": {
+      "title": "Build AI Context",
+      "properties": {
+        "baic.maxFileLines": { "type": "number", "default": 3000 },
+        "baic.outputDir": { "type": "string", "default": "" },
+        "baic.redact": { "type": "boolean", "default": false },
+        "baic.includeSecretFiles": { "type": "boolean", "default": false },
+        "baic.projectOverview": { "type": "boolean", "default": false },
+        "baic.writeGraph": {
+          "type": "string",
+          "enum": ["off", "txt", "json"],
+          "default": "off"
+        },
+        "baic.updateGitignore": { "type": "boolean", "default": true }
+      }
+    },
+    "walkthroughs": [
+      {
+        "id": "baic.gettingStarted",
+        "title": "Build AI Context",
+        "description": "Scan, filter, and export AI-readable bundles.",
+        "steps": [
+          {
+            "id": "open",
+            "title": "Open AI Context",
+            "description": "Open the AI Context view in the Activity Bar.",
+            "media": { "markdown": "README.md" }
+          },
+          {
+            "id": "scan",
+            "title": "Scan",
+            "description": "Run **Build AI Context: Scan**.",
+            "media": { "markdown": "README.md" }
+          },
+          {
+            "id": "filter",
+            "title": "Filter",
+            "description": "Toggle categories or add the current file.",
+            "media": { "markdown": "README.md" }
+          },
+          {
+            "id": "export",
+            "title": "Export",
+            "description": "Export bundles and open the Agent Contract.",
+            "media": { "markdown": "README.md" }
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "package": "npm run compile && npx --yes @vscode/vsce package --allow-missing-repository --skip-license",
+    "test": "npm run compile && node --import tsx --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.25.9",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}

@@ -4,9 +4,15 @@ import { fileURLToPath } from "node:url";
 import type { EnginePolicy } from "./types.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const policyPath = join(here, "..", "..", "policy", "policy.json");
+const defaultPolicyPath = join(here, "..", "..", "policy", "policy.json");
 
+let policyPath = defaultPolicyPath;
 let cached: EnginePolicy | undefined;
+
+export function setPolicyPath(path: string): void {
+  policyPath = path;
+  cached = undefined;
+}
 
 export function loadPolicy(): EnginePolicy {
   if (!cached) {
