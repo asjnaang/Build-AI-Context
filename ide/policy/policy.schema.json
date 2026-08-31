@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Build AI Context engine policy",
+  "type": "object",
+  "required": [
+    "bundleMaxLines",
+    "largeFileWarnLines",
+    "largeFileSkipLines",
+    "textEncoding",
+    "defaultOutputDir",
+    "categoryExtensions",
+    "categoryAliases",
+    "categoryDescriptions",
+    "specialFilenames",
+    "defaultExcludedDirs",
+    "defaultExcludedPrefixes",
+    "extraExcludedPatterns",
+    "defaultSecretPatterns",
+    "redactionMark"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "bundleMaxLines": { "type": "integer", "const": 8000 },
+    "largeFileWarnLines": { "type": "integer", "const": 1500 },
+    "largeFileSkipLines": { "type": "integer", "const": 3000 },
+    "textEncoding": { "type": "string" },
+    "defaultOutputDir": { "type": "string" },
+    "categoryExtensions": {
+      "type": "object",
+      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+    },
+    "categoryAliases": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "categoryDescriptions": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "specialFilenames": { "type": "array", "items": { "type": "string" } },
+    "defaultExcludedDirs": { "type": "array", "items": { "type": "string" } },
+    "defaultExcludedPrefixes": { "type": "array", "items": { "type": "string" } },
+    "extraExcludedPatterns": { "type": "array", "items": { "type": "string" } },
+    "defaultSecretPatterns": { "type": "array", "items": { "type": "string" } },
+    "redactionMark": { "type": "string" }
+  }
+}
