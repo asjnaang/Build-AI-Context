@@ -1,0 +1,16 @@
+<idea-plugin>
+    <id>com.asjnaang.buildaicontext</id>
+    <name>Build AI Context</name>
+    <vendor>ASJN</vendor>
+    <description><![CDATA[
+      Scan a project, filter files, and export AI-readable source bundles without Python.
+      Selection is composed filters plus a checkbox tree; oversized files are shown unchecked by default.
+    ]]></description>
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="AI Context"
+                    anchor="right"
+                    factoryClass="com.asjnaang.buildaicontext.BaicToolWindowFactory"/>
+    </extensions>
+</idea-plugin>
