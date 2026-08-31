@@ -1,0 +1,40 @@
+{
+  "root": "small-py",
+  "file_count": 3,
+  "parsed": 2,
+  "skipped": 1,
+  "engine": "ast",
+  "languages": {
+    "python": 2
+  },
+  "catalog": [
+    {
+      "path": "src/util.py",
+      "rank": 0.649123,
+      "symbols": [
+        {
+          "kind": "fn",
+          "name": "helper",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "path": "main.py",
+      "rank": 0.350877,
+      "symbols": [
+        {
+          "kind": "fn",
+          "name": "main",
+          "line": 5
+        }
+      ]
+    }
+  ],
+  "imports": [
+    {
+      "from": "main.py",
+      "to": "src/util.py"
+    }
+  ]
+}

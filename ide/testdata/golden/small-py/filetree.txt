@@ -1,0 +1,11 @@
+root: small-py
+file_count: 3
+
+paths:
+README.md,
+main.py,
+src/util.py,
+
+types:
+config_docs: 1
+python: 2

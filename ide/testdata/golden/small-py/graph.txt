@@ -1,0 +1,17 @@
+root: small-py
+file_count: 3
+parsed: 2
+skipped: 1
+engine: ast
+languages: python=2
+
+catalog:
+src/util.py:
+  rank: 0.6491,
+  fn: helper @1,
+main.py:
+  rank: 0.3509,
+  fn: main @5,
+
+imports:
+main.py --> src/util.py,
