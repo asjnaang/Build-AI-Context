@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { packChunks, renderChunkBlock, splitIntoChunks } from "./chunk.ts";
 import {
@@ -12,7 +12,8 @@ import { generateGraph } from "./graph.ts";
 import { updateGitignore } from "./gitignore.ts";
 import { writeProjectOverview } from "./overview.ts";
 import { loadPolicy } from "./policy.ts";
-import type { Catalog, ExportOptions, ExportResult, FileChunk, Selection, SourceFile } from "./types.ts";
+import { pathMatchesAnyPattern } from "./scan.ts";
+import { EngineCanceled, type Catalog, type ExportOptions, type ExportResult, type Selection } from "./types.ts";
 
 let promptPathOverride: string | undefined;
 
@@ -37,36 +38,49 @@ function promptMd(): string {
   return "";
 }
 
+function throwIfCanceled(isCanceled?: () => boolean): void {
+  if (isCanceled?.()) throw new EngineCanceled();
+}
+
+function resolveOutputDir(root: string, outputDir?: string): string {
+  if (!outputDir) return join(root, sanitizeOutputDirName(root));
+  return isAbsolute(outputDir) ? outputDir : join(root, outputDir);
+}
+
 export async function exportCatalog(
   catalog: Catalog,
   selection: Selection,
   options: ExportOptions,
 ): Promise<ExportResult> {
+  throwIfCanceled(options.isCanceled);
   const policy = loadPolicy();
   const root = catalog.workspace;
+  const includeSecretFiles = options.includeSecretFiles === true;
+  const files = includeSecretFiles
+    ? selection.files
+    : selection.files.filter((f) => !pathMatchesAnyPattern(f.relPath, policy.defaultSecretPatterns));
+  const effective = { ...selection, files };
   const maxLines = policy.bundleMaxLines;
   const { chunks, skipped: splitSkipped } = splitIntoChunks(
-    selection.files,
+    effective.files,
     maxLines,
     options.redact,
     options.maxFileLines,
   );
+  throwIfCanceled(options.isCanceled);
   const warnings = splitSkipped.filter((item) => item.reason === "large_file_warning");
   const skippedDuringSplit = splitSkipped.filter((item) => item.reason !== "large_file_warning");
   const packed = packChunks(chunks, maxLines, options.redact);
   const skippedDuringPack = [...skippedDuringSplit, ...packed.skipped];
 
-  const outDir = options.outputDir
-    ? options.outputDir
-    : join(root, sanitizeOutputDirName(root));
+  const outDir = resolveOutputDir(root, options.outputDir);
   mkdirSync(outDir, { recursive: true });
   const timestamp = extractTimestampFromDirName(basename(outDir));
   const filetreeContent = generateFiletree(catalog.files, root);
   const folderName = basename(root).replaceAll(" ", "_");
   const filetreeName = `${folderName}_file_tree_${timestamp}.txt`;
-  if (options.updateGitignore) updateGitignore(root, filetreeName);
 
-  const sourceLookup = new Map(selection.files.map((s) => [s.relPath, s]));
+  const sourceLookup = new Map(effective.files.map((s) => [s.relPath, s]));
   const manifest: Record<string, unknown> = {
     tool: "build-ai-context",
     created_at_utc: new Date().toISOString(),
@@ -74,7 +88,7 @@ export async function exportCatalog(
     max_lines_per_bundle: maxLines,
     max_file_lines: options.maxFileLines,
     bundle_count: packed.bundles.length,
-    skip_secret_like_files: true,
+    skip_secret_like_files: !includeSecretFiles,
     selection: {
       selection_mode: selection.metadata.selectionMode,
       selected_categories: selection.metadata.selectedCategories,
@@ -82,12 +96,12 @@ export async function exportCatalog(
       name_filters: selection.metadata.nameFilters,
       missing_paths: selection.metadata.missingPaths,
     },
-    selected_files: selection.files.map((f) => f.relPath),
+    selected_files: effective.files.map((f) => f.relPath),
     filetree: filetreeName,
     summary: {
-      selected_file_count: selection.files.length,
-      selected_total_lines: selection.files.reduce((n, f) => n + f.lineCount, 0),
-      selected_total_bytes: selection.files.reduce((n, f) => n + f.sizeBytes, 0),
+      selected_file_count: effective.files.length,
+      selected_total_lines: effective.files.reduce((n, f) => n + f.lineCount, 0),
+      selected_total_bytes: effective.files.reduce((n, f) => n + f.sizeBytes, 0),
       skipped_counts: catalog.skipped,
       skipped_during_pack_count: skippedDuringPack.length,
       warning_count: warnings.length,
@@ -101,7 +115,9 @@ export async function exportCatalog(
   writeFileSync(promptPath, promptMd(), "utf8");
 
   const bundlePaths: string[] = [];
+  const exportedRels = new Set<string>();
   packed.bundles.forEach((bundle, index0) => {
+    throwIfCanceled(options.isCanceled);
     const index = index0 + 1;
     const bundleName = `${folderName}_bundle_${String(index).padStart(3, "0")}_${timestamp}.txt`;
     const bundlePath = join(outDir, bundleName);
@@ -134,8 +150,10 @@ export async function exportCatalog(
     }
 
     for (const chunk of bundle) {
+      throwIfCanceled(options.isCanceled);
       const source = sourceLookup.get(chunk.relPath);
       if (!source) continue;
+      exportedRels.add(chunk.relPath);
       const blockText = renderChunkBlock(chunk, options.redact);
       const blockLineCount = blockText.split(/\n/).length - (blockText.endsWith("\n") ? 1 : 0);
       const bundleStartLine = nextBundleLine;
@@ -173,7 +191,7 @@ export async function exportCatalog(
     overviewPath = writeProjectOverview(
       root,
       catalog.files,
-      selection.files,
+      effective.files,
       outDir,
       selection.metadata,
       manifestName,
@@ -182,10 +200,14 @@ export async function exportCatalog(
 
   let graphPath: string | undefined;
   if (options.writeGraph) {
+    throwIfCanceled(options.isCanceled);
     const content = generateGraph(catalog.files, root, options.writeGraph);
     graphPath = join(outDir, `${folderName}_code_graph_${timestamp}.${options.writeGraph}`);
     writeFileSync(graphPath, content, "utf8");
   }
+
+  throwIfCanceled(options.isCanceled);
+  if (options.updateGitignore) updateGitignore(root, filetreeName);
 
   return {
     outputDir: outDir,
@@ -195,29 +217,33 @@ export async function exportCatalog(
     graphPath,
     overviewPath,
     promptPath,
-    filesExported: selection.files.length,
+    filesExported: exportedRels.size,
     bundlesCreated: packed.bundles.length,
     warnings,
     skippedDuringPack,
   };
 }
 
-export function writeStandaloneFiletree(catalog: Catalog): string {
+export function writeStandaloneFiletree(catalog: Catalog, shouldUpdateGitignore = true): string {
   const timestamp = generateTimestamp();
   const folderName = basename(catalog.workspace).replaceAll(" ", "_");
   const name = `${folderName}_file_tree_${timestamp}.txt`;
   const path = join(catalog.workspace, name);
   writeFileSync(path, generateFiletree(catalog.files, catalog.workspace), "utf8");
-  updateGitignore(catalog.workspace, name);
+  if (shouldUpdateGitignore) updateGitignore(catalog.workspace, name);
   return path;
 }
 
-export function writeStandaloneGraph(catalog: Catalog, format: "txt" | "json"): string {
+export function writeStandaloneGraph(
+  catalog: Catalog,
+  format: "txt" | "json",
+  shouldUpdateGitignore = true,
+): string {
   const timestamp = generateTimestamp();
   const folderName = basename(catalog.workspace).replaceAll(" ", "_");
   const name = `${folderName}_code_graph_${timestamp}.${format}`;
   const path = join(catalog.workspace, name);
   writeFileSync(path, generateGraph(catalog.files, catalog.workspace, format), "utf8");
-  updateGitignore(catalog.workspace, name);
+  if (shouldUpdateGitignore) updateGitignore(catalog.workspace, name);
   return path;
 }

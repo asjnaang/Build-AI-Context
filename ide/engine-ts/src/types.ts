@@ -1,5 +1,13 @@
+export class EngineCanceled extends Error {
+  constructor() {
+    super("canceled");
+    this.name = "EngineCanceled";
+  }
+}
+
 export interface ScanOptions {
   includeSecretFiles: boolean;
+  isCanceled?: () => boolean;
 }
 
 export interface SourceFile {
@@ -20,6 +28,8 @@ export interface Catalog {
 
 export interface Filters {
   categories: string[];
+  /** When true, an empty categories list means no files (explicit opt-out). */
+  categoriesConstrained?: boolean;
   paths: string[];
   nameFilters: string[];
   keywords: string[];
@@ -45,6 +55,8 @@ export interface ExportOptions {
   projectOverview: boolean;
   writeGraph?: "txt" | "json";
   updateGitignore: boolean;
+  includeSecretFiles?: boolean;
+  isCanceled?: () => boolean;
 }
 
 export interface ExportResult {

@@ -112,7 +112,7 @@ class HostStateTest {
         state.applyScan(catalog)
         assertTrue(state.checked.contains("main.py"))
         assertTrue(state.checked.contains("README.md"))
-        state.toggleCategory("python")
+        state.toggleCategory("config_docs")
         assertTrue(state.checked.contains("main.py"))
         assertFalse(state.checked.contains("README.md"))
         val selection = state.exportSelection()

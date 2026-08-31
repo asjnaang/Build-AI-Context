@@ -1,7 +1,10 @@
 package com.asjnaang.buildaicontext.engine
 
+class EngineCanceled : RuntimeException("canceled")
+
 data class ScanOptions(
     val includeSecretFiles: Boolean = false,
+    val isCanceled: () -> Boolean = { false },
 )
 
 data class SourceFile(
@@ -25,6 +28,7 @@ data class Filters(
     val paths: MutableList<String> = mutableListOf(),
     val nameFilters: MutableList<String> = mutableListOf(),
     val keywords: MutableList<String> = mutableListOf(),
+    var categoriesConstrained: Boolean = false,
 )
 
 data class SelectionMetadata(
@@ -47,6 +51,8 @@ data class ExportOptions(
     val projectOverview: Boolean = false,
     val writeGraph: String? = null,
     val updateGitignore: Boolean = true,
+    val includeSecretFiles: Boolean = false,
+    val isCanceled: () -> Boolean = { false },
 )
 
 data class ExportResult(

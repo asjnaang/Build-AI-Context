@@ -8,6 +8,7 @@ export type {
   Selection,
   SourceFile,
 } from "./types.ts";
+export { EngineCanceled } from "./types.ts";
 
 export { scan } from "./scan.ts";
 export { applyMaxFileLines, select } from "./select.ts";

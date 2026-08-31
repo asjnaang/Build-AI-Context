@@ -75,6 +75,7 @@ fun scan(workspace: String, options: ScanOptions = ScanOptions()): Catalog {
     }
 
     for (abs in walkFiles(root)) {
+        if (options.isCanceled()) throw EngineCanceled()
         val rel = posixRel(root, abs)
         if (shouldSkipByDir(rel, policy.defaultExcludedDirs)) {
             bump("default_excluded_dir")
