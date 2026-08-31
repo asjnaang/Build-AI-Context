@@ -12,5 +12,32 @@
         <toolWindow id="AI Context"
                     anchor="right"
                     factoryClass="com.asjnaang.buildaicontext.BaicToolWindowFactory"/>
+        <applicationConfigurable parentId="tools"
+                                 id="com.asjnaang.buildaicontext.settings"
+                                 instance="com.asjnaang.buildaicontext.BaicSettingsConfigurable"
+                                 displayName="Build AI Context"/>
+        <notificationGroup id="Build AI Context" displayType="BALLOON"/>
     </extensions>
+
+    <actions>
+        <action id="com.asjnaang.buildaicontext.Scan"
+                class="com.asjnaang.buildaicontext.BaicScanAction"
+                text="Build AI Context: Scan"
+                description="Scan the project for supported files">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="com.asjnaang.buildaicontext.Export"
+                class="com.asjnaang.buildaicontext.BaicExportAction"
+                text="Build AI Context: Export"
+                description="Export the current AI Context selection">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="com.asjnaang.buildaicontext.AddToContext"
+                class="com.asjnaang.buildaicontext.BaicAddToContextAction"
+                text="Add to AI Context"
+                description="Add the current file or path to the AI Context selection">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>
