@@ -22,8 +22,11 @@
   ],
   "capabilities": {
     "untrustedWorkspaces": {
-      "supported": "limited",
-      "description": "Export is disabled until the workspace is trusted."
+      "supported": false,
+      "description": "Scan and export require a trusted workspace."
+    },
+    "virtualWorkspaces": {
+      "supported": false
     }
   },
   "contributes": {
@@ -55,15 +58,18 @@
     "commands": [
       {
         "command": "baic.scan",
-        "title": "Build AI Context: Scan"
+        "title": "Build AI Context: Scan",
+        "enablement": "workspaceIsTrusted"
       },
       {
         "command": "baic.export",
-        "title": "Build AI Context: Export"
+        "title": "Build AI Context: Export",
+        "enablement": "workspaceIsTrusted"
       },
       {
         "command": "baic.refresh",
-        "title": "Build AI Context: Refresh"
+        "title": "Build AI Context: Refresh",
+        "enablement": "workspaceIsTrusted"
       },
       {
         "command": "baic.addCurrentFile",
@@ -78,6 +84,14 @@
         "title": "Build AI Context: Set Keyword"
       },
       {
+        "command": "baic.setNameFilter",
+        "title": "Build AI Context: Set Filename Filter"
+      },
+      {
+        "command": "baic.setPathFilter",
+        "title": "Build AI Context: Set Path Filter"
+      },
+      {
         "command": "baic.clearFilters",
         "title": "Build AI Context: Clear Filters"
       },
@@ -87,11 +101,13 @@
       },
       {
         "command": "baic.generateFiletree",
-        "title": "Build AI Context: Generate Filetree"
+        "title": "Build AI Context: Generate Filetree",
+        "enablement": "workspaceIsTrusted"
       },
       {
         "command": "baic.generateGraph",
-        "title": "Build AI Context: Generate Code Graph"
+        "title": "Build AI Context: Generate Code Graph",
+        "enablement": "workspaceIsTrusted"
       },
       {
         "command": "baic.openLastExport",
@@ -104,35 +120,49 @@
       {
         "command": "baic.toggleRedact",
         "title": "Build AI Context: Toggle Redact"
+      },
+      {
+        "command": "baic.toggleSecrets",
+        "title": "Build AI Context: Toggle Secrets"
+      },
+      {
+        "command": "baic.toggleOverview",
+        "title": "Build AI Context: Toggle Overview"
+      },
+      {
+        "command": "baic.cycleGraph",
+        "title": "Build AI Context: Cycle Graph Format"
       }
     ],
     "menus": {
       "explorer/context": [
         {
           "command": "baic.addExplorerPath",
-          "group": "baic@1"
+          "group": "baic@1",
+          "when": "workspaceIsTrusted"
         }
       ],
       "editor/context": [
         {
           "command": "baic.addCurrentFile",
-          "group": "baic@1"
+          "group": "baic@1",
+          "when": "workspaceIsTrusted"
         }
       ],
       "view/title": [
         {
           "command": "baic.scan",
-          "when": "view == baic.filters",
+          "when": "workspaceIsTrusted && view == baic.filters",
           "group": "navigation"
         },
         {
           "command": "baic.export",
-          "when": "view == baic.files",
+          "when": "workspaceIsTrusted && view == baic.files",
           "group": "navigation"
         },
         {
           "command": "baic.refresh",
-          "when": "view == baic.files",
+          "when": "workspaceIsTrusted && view == baic.files",
           "group": "navigation"
         }
       ]
