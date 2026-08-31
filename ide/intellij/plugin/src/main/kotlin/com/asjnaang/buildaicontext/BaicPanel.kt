@@ -26,6 +26,8 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
     private val controller = project.getService(BaicController::class.java)
     private val categoryBoxes = LinkedHashMap<String, JCheckBox>()
     private val keywordField = JBTextField()
+    private val nameField = JBTextField()
+    private val pathField = JBTextField()
     private val treeRoot = CheckedTreeNode("files")
     private val treeModel = DefaultTreeModel(treeRoot)
     private val tree: CheckboxTree
@@ -46,6 +48,8 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
         val group = DefaultActionGroup().apply {
             add(ActionManager.getInstance().getAction("com.asjnaang.buildaicontext.Scan"))
             add(ActionManager.getInstance().getAction("com.asjnaang.buildaicontext.Export"))
+            add(ActionManager.getInstance().getAction("com.asjnaang.buildaicontext.Refresh"))
+            add(ActionManager.getInstance().getAction("com.asjnaang.buildaicontext.Clear"))
         }
         toolbar = ActionManager.getInstance().createActionToolbar("BaicToolbar", group, true).apply {
             targetComponent = this@BaicPanel
@@ -65,7 +69,9 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
         for (category in policy.categoryDescriptions.keys) {
             val box = JCheckBox(category)
             box.addActionListener {
+                if (rebuilding) return@addActionListener
                 val selected = categoryBoxes.filter { it.value.isSelected }.keys.toList()
+                controller.state.filters.categoriesConstrained = true
                 controller.state.filters.categories.clear()
                 controller.state.filters.categories.addAll(selected)
                 controller.state.catalog?.let { controller.state.applyScan(it) }
@@ -76,11 +82,11 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
         }
 
         keywordField.emptyText.text = "Keywords"
-        keywordField.document.addDocumentListener(object : DocumentListener {
-            override fun insertUpdate(e: DocumentEvent) = applyKeyword()
-            override fun removeUpdate(e: DocumentEvent) = applyKeyword()
-            override fun changedUpdate(e: DocumentEvent) = applyKeyword()
-        })
+        nameField.emptyText.text = "Filename substring"
+        pathField.emptyText.text = "Path chips (comma-separated)"
+        listen(keywordField) { controller.state.setKeywords(keywordField.text.orEmpty()) }
+        listen(nameField) { controller.state.setNameFilters(nameField.text.orEmpty()) }
+        listen(pathField) { controller.state.setPaths(pathField.text.orEmpty()) }
 
         val exportButton = JButton("Export").apply {
             addActionListener { controller.exportSelection() }
@@ -93,6 +99,12 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
             row("Keywords") {
                 cell(keywordField).align(AlignX.FILL)
             }
+            row("Filename") {
+                cell(nameField).align(AlignX.FILL)
+            }
+            row("Paths") {
+                cell(pathField).align(AlignX.FILL)
+            }
             row {
                 cell(exportButton)
             }
@@ -104,9 +116,17 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
         return wrapper
     }
 
-    private fun applyKeyword() {
-        controller.state.setKeywords(keywordField.text.orEmpty())
-        reload()
+    private fun listen(field: JBTextField, apply: () -> Unit) {
+        field.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent) = onChange()
+            override fun removeUpdate(e: DocumentEvent) = onChange()
+            override fun changedUpdate(e: DocumentEvent) = onChange()
+            private fun onChange() {
+                if (rebuilding) return
+                apply()
+                reload()
+            }
+        })
     }
 
     fun reload() {
@@ -118,9 +138,16 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
                 for ((category, box) in categoryBoxes) {
                     val n = counts[category] ?: 0
                     box.text = "$category ($n)"
-                    box.isSelected = category in controller.state.filters.categories
+                    box.isSelected = if (!controller.state.filters.categoriesConstrained) {
+                        n > 0
+                    } else {
+                        controller.state.categoryChecked(category)
+                    }
                 }
             }
+            syncField(keywordField, controller.state.filters.keywords.joinToString(" "))
+            syncField(nameField, controller.state.filters.nameFilters.joinToString(" "))
+            syncField(pathField, controller.state.filters.paths.joinToString(", "))
             val (included, oversized) = controller.state.visibleFiles()
             val oversizedSet = oversized.map { it.relPath }.toSet()
             val all = included + oversized
@@ -145,6 +172,7 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
                         oversized = file.relPath in oversizedSet,
                         category = file.category,
                         name = name,
+                        lineCount = file.lineCount,
                     ),
                 )
                 node.isChecked = file.relPath in controller.state.checked
@@ -161,6 +189,10 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
         }
     }
 
+    private fun syncField(field: JBTextField, value: String) {
+        if (field.text != value) field.text = value
+    }
+
     private fun expandFolders() {
         var row = 0
         while (row < tree.rowCount) {
@@ -174,6 +206,7 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
         val oversized: Boolean,
         val category: String,
         val name: String,
+        val lineCount: Int,
     ) {
         override fun toString(): String = name
     }
@@ -192,6 +225,7 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
             val user = node.userObject
             if (user is FileRow) {
                 textRenderer.append(user.name)
+                textRenderer.append(" (${user.lineCount} lines)", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 if (user.oversized) {
                     textRenderer.append(" (oversized)", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 }

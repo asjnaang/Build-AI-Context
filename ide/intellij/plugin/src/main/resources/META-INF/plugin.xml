@@ -32,6 +32,26 @@
                 description="Export the current AI Context selection">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
+        <action id="com.asjnaang.buildaicontext.Refresh"
+                class="com.asjnaang.buildaicontext.BaicRefreshAction"
+                text="Refresh"
+                description="Rescan the project"/>
+        <action id="com.asjnaang.buildaicontext.Clear"
+                class="com.asjnaang.buildaicontext.BaicClearAction"
+                text="Clear"
+                description="Reset filters and default file checks"/>
+        <action id="com.asjnaang.buildaicontext.GenerateFiletree"
+                class="com.asjnaang.buildaicontext.BaicGenerateFiletreeAction"
+                text="Build AI Context: Generate Filetree"
+                description="Write a filetree next to the project">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="com.asjnaang.buildaicontext.GenerateGraph"
+                class="com.asjnaang.buildaicontext.BaicGenerateGraphAction"
+                text="Build AI Context: Generate Code Graph"
+                description="Write a code graph next to the project">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
         <action id="com.asjnaang.buildaicontext.AddToContext"
                 class="com.asjnaang.buildaicontext.BaicAddToContextAction"
                 text="Add to AI Context"
