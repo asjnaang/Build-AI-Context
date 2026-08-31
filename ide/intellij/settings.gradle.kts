@@ -6,4 +6,4 @@ pluginManagement {
 }
 
 rootProject.name = "build-ai-context-intellij"
-include("engine")
+include("engine", "plugin")
