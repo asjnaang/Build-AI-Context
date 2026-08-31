@@ -30,8 +30,9 @@ env/
 **/.env
 
 # IDE
-.idea/
-.vscode/
+/.idea/
+/.vscode/
+node_modules/
 *.swp
 *.swo
 *~
