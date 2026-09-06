@@ -21,6 +21,11 @@ wheels/
 *.egg
 .env
 
+
+node_modules/
+IntelliJ/
+Vscode/
+
 # Virtual environments
 .venv/
 .venv-*/
