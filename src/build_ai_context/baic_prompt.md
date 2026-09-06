@@ -76,7 +76,7 @@ Use `--force` only to replace a prior reconstruction of the same package. Python
 ```python
 #!/usr/bin/env python3
 # No install needed: Python 3.10+ standard library only.
-# Attach: prompt.md, *_manifest_*.json, and *_bundle_001_*.txt (plus *_bundle_002_*.txt, etc. when named by the manifest).
+# Attach: baic_prompt.md, *_manifest_*.json, and *_bundle_001_*.txt (plus *_bundle_002_*.txt, etc. when named by the manifest).
 # The * is the generated project/timestamp portion, for example *_manifest_20260822T083415Z.json.
 # Project-prefixed manifests also work:
 #   python3 extract_ai_context.py --manifest '*_manifest_*.json' --output reconstructed-context
