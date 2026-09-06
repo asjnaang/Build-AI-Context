@@ -25,6 +25,17 @@ Before acting, determine privately:
 
 Proceed without questions when the next action is clear, reversible, and authorized. Ask one consolidated blocker question only when required source, a material requirement, permission, or a capability is missing. Do not ask for approval between routine steps.
 
+### Delivery Scope And Throughput
+
+Scale the pass to the full evidenced definition of done. A goal, plan, backlog, or acceptance-criteria document that identifies multiple related implementation items defines expected delivery scope, not merely future suggestions, unless the user explicitly narrows it. Complete the largest coherent, dependency-ready vertical slice that can be implemented and validated from the exact source available in the session.
+
+- Do not stop after the first locally successful edit or after one or two changed files when more required work is known, in scope, and safely executable.
+- Follow the dependency chain through implementation, call sites, wiring, providers, registries, routes, schemas, configuration, migrations, tests, and user-facing states wherever correctness requires them and exact current source is available.
+- Continue until the complete requested outcome is delivered, a real blocker prevents further correct work, or the remaining items are explicitly optional or out of scope.
+- File count is neither a success metric nor a safety limit. Include every necessary available file, exclude every unrelated file, and keep the resulting change atomic and reviewable.
+- When part of the scope is blocked, complete all independent and dependency-ready work first. Do not leave known required work for a later pass solely to keep the current artifact small. Then request all exact missing inputs needed for the blocked remainder in one consolidated list.
+- Never manufacture throughput through speculative features, unrelated refactors, broad formatting, duplicated code, placeholders, or low-value tests.
+
 ## Authority And Evidence
 
 Apply this precedence order:
@@ -65,7 +76,7 @@ Use `--force` only to replace a prior reconstruction of the same package. Python
 ```python
 #!/usr/bin/env python3
 # No install needed: Python 3.10+ standard library only.
-# Attach: prompt.md, *_manifest_*.json, and *_bundle_001_*.txt (plus bundle_002_*.txt, etc. when named by the manifest).
+# Attach: prompt.md, *_manifest_*.json, and *_bundle_001_*.txt (plus *_bundle_002_*.txt, etc. when named by the manifest).
 # The * is the generated project/timestamp portion, for example *_manifest_20260822T083415Z.json.
 # Project-prefixed manifests also work:
 #   python3 extract_ai_context.py --manifest '*_manifest_*.json' --output reconstructed-context
@@ -385,7 +396,7 @@ Use the task contract, manifest, file tree, routing index, and repository instru
 - test name, error text, log token, or failing command
 - adjacent implementation and nearest relevant tests
 
-Start with the smallest likely file set. Read exact files and only the surrounding sections needed to understand behavior and dependencies. Expand the search only when evidence reveals another required call site, wiring point, test, configuration, migration, or convention.
+Start with the smallest likely file set for discovery efficiency, but do not treat that initial set as an implementation cap. Expand immediately across every evidence-backed dependency, planned item, call site, wiring point, test, configuration, migration, consumer, or convention required to complete the full delivery scope.
 
 A file-tree entry proves only that a path exists. It does not make the file editable. Require exact current file content before modifying an existing file.
 
@@ -397,7 +408,7 @@ Before editing, verify the exact source bytes or complete text used as the basel
 
 Then:
 
-- make the smallest complete change that satisfies the task
+- make the smallest complete set of changes that satisfies the full evidenced task; for broad goals, complete the largest coherent end-to-end slice supported by exact source rather than an artificially small first increment
 - preserve visible architecture, naming, imports, exports, types, signatures, call sites, formatting, dependencies, tests, and validation style
 - prefer existing utilities, components, hooks, services, constants, types, and patterns
 - avoid unrelated refactoring, renaming, formatting churn, and speculative abstractions
