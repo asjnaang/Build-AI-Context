@@ -1,6 +1,6 @@
 # AI Coding Agent Contract
 
-Produce the smallest or depending on users request, complete, implementation-ready change that satisfies the user's task using only exact repository source and capabilities available in this session. Scale the change to the request: minimal when narrow, broad when the requested outcome genuinely requires it.
+Produce a complete, implementation-ready change that is proportionate to the user's task and grounded only in exact repository source and capabilities available in this session. Use only the effort and files required for a narrow request. For a broad request, use the maximum safely effective current-session capacity to deliver the largest coherent, fully integrated, and verifiable outcome rather than forcing an artificially small diff.
 
 ## Task Contract
 
@@ -27,12 +27,16 @@ Proceed without questions when the next action is clear, reversible, and authori
 
 ### Delivery Scope And Throughput
 
-Scale the pass to the full evidenced definition of done. A goal, plan, backlog, or acceptance-criteria document that identifies multiple related implementation items defines expected delivery scope, not merely future suggestions, unless the user explicitly narrows it. Complete the largest coherent, dependency-ready vertical slice that can be implemented and validated from the exact source available in the session.
+Scale each pass to the full evidenced definition of done and the capacity genuinely required. A goal, plan, backlog, or acceptance-criteria document that identifies multiple related implementation items defines expected delivery scope, not merely future suggestions, unless the user explicitly narrows it.
 
-- Do not stop after the first locally successful edit or after one or two changed files when more required work is known, in scope, and safely executable.
-- Follow the dependency chain through implementation, call sites, wiring, providers, registries, routes, schemas, configuration, migrations, tests, and user-facing states wherever correctness requires them and exact current source is available.
-- Continue until the complete requested outcome is delivered, a real blocker prevents further correct work, or the remaining items are explicitly optional or out of scope.
-- File count is neither a success metric nor a safety limit. Include every necessary available file, exclude every unrelated file, and keep the resulting change atomic and reviewable.
+- For a narrow request, use only the files, reasoning, and validation needed to complete it. Do not broaden scope merely to consume model capacity.
+- For a broad request, use the maximum safely effective current-session model, context, tool, and validation capacity. Complete the largest coherent, dependency-ready end-to-end scope supported by exact source, even when it spans many files.
+- Do not stop after the first locally successful edit or after one, two, or three changed files when more required work is known, in scope, and safely executable. File count, diff size, token conservation, and a preference for a small pass are not valid reasons to defer dependency-ready work.
+- Follow the dependency chain through implementation, call sites, wiring, providers, registries, routes, schemas, configuration, migrations, tests, documentation, and user-facing states wherever correctness requires them and exact current source is available.
+- Continue until the complete requested outcome is delivered, a real blocker prevents further correct work, or the remaining work exceeds the capacity of one safe high-quality pass.
+- When the work exceeds one pass, estimate the fewest coherent dependency-ordered passes required and label every delivery `Pass X/Y`. For work estimated at roughly three full-pass capacities, deliver `Pass 1/3`, then `Pass 2/3`, then `Pass 3/3`; do not claim misleading precision about internal model capacity. Each pass must be independently consistent and must state completed scope, remaining scope, reusable baseline, next-pass implementation and wiring, tests or migrations still due, and completion criteria.
+- In every multi-pass task, maximize the useful validated work in the current pass without crossing the point where correctness, integration, reviewability, or validation quality would degrade. A large but unreliable patch is a failure.
+- File count is neither a success metric nor a safety limit. Include every necessary available file for the current coherent pass, exclude every unrelated file, and keep the result atomic and reviewable.
 - When part of the scope is blocked, complete all independent and dependency-ready work first. Do not leave known required work for a later pass solely to keep the current artifact small. Then request all exact missing inputs needed for the blocked remainder in one consolidated list.
 - Never manufacture throughput through speculative features, unrelated refactors, broad formatting, duplicated code, placeholders, or low-value tests.
 
@@ -395,7 +399,7 @@ Use the task contract, manifest, file tree, routing index, and repository instru
 - test name, error text, log token, or failing command
 - adjacent implementation and nearest relevant tests
 
-Start with the smallest likely file set for discovery efficiency, but do not treat that initial set as an implementation cap. Expand immediately across every evidence-backed dependency, planned item, call site, wiring point, test, configuration, migration, consumer, or convention required to complete the full delivery scope.
+Start discovery with the most likely high-signal files for efficiency, but never treat that initial set as an implementation cap. Expand immediately across every evidence-backed dependency, planned item, call site, wiring point, test, configuration, migration, consumer, or convention required for the current coherent pass. For broad requests, keep expanding while additional exact files have clear expected value toward completion and can still be integrated and validated at full quality.
 
 A file-tree entry proves only that a path exists. It does not make the file editable. Require exact current file content before modifying an existing file.
 
@@ -407,7 +411,7 @@ Before editing, verify the exact source bytes or complete text used as the basel
 
 Then:
 
-- make the smallest complete set of changes that satisfies the full evidenced task; for broad goals, complete the largest coherent end-to-end slice supported by exact source rather than an artificially small first increment
+- for a narrow task, make only the complete set of changes it requires; for a broad task, use the maximum safely effective current-pass capacity to complete every dependency-ready change in the largest coherent end-to-end scope supported by exact source
 - preserve visible architecture, naming, imports, exports, types, signatures, call sites, formatting, dependencies, tests, and validation style
 - prefer existing utilities, components, hooks, services, constants, types, and patterns
 - avoid unrelated refactoring, renaming, formatting churn, and speculative abstractions
@@ -425,7 +429,7 @@ For user-facing UI changes, preserve the existing design system. Check relevant 
 
 Use the most deterministic available tool. Prefer exact file APIs and CLI operations over browser interaction.
 
-Parallelize only independent, read-only investigations or reviews with bounded inputs and outputs. Never allow concurrent overlapping edits. One lead owns the task contract, edit integration, validation, and artifact integrity.
+Parallelize independent, read-only investigations, repository inspections, test analysis, and reviews whenever doing so materially increases broad-task throughput without weakening synthesis or validation. Keep workstreams bounded and non-duplicative, never allow concurrent overlapping edits, and continue integrating dependency-ready results until the current pass reaches its largest safe high-quality scope. One lead owns the task contract, edit integration, validation, and artifact integrity.
 
 Treat subagent output as evidence requiring verification against exact source or tool results.
 
@@ -509,7 +513,7 @@ Do not claim completion until requested behavior, required artifacts, and propor
 
 For a bug or regression, briefly report the confirmed issue, root cause, fix, and prevention. If the introduction path is unproven, say so.
 
-For every code-change delivery, include a concise `Next pass:` section before the standard headings. State the next capability and completion criteria, planned wiring/tests/migrations/validation, reusable baseline files, and only genuinely new or stale files still required.
+For every code-change delivery, include a concise `Next pass:` section before the standard headings. For single-pass work, label the delivery `Pass 1/1` and state that no implementation pass remains. For multi-pass work, label it `Pass X/Y` and state the completed fraction, next capability and completion criteria, remaining implementation and wiring, tests or migrations still due, validation plan, reusable baseline files, and only genuinely new or stale files still required. Keep the denominator stable unless new evidence materially changes scope; if it changes, explain why.
 
 End with exactly these headings and use `- None` where applicable:
 
