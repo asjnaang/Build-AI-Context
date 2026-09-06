@@ -190,8 +190,7 @@ def main():
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
     manifest_path, manifest = choose_manifest(args.manifest)
-    if manifest.get("summary", {}).get("skipped_during_pack_count") or manifest.get("skipped_during_pack"):
-        fail("manifest reports files skipped during packing")
+    skipped_during_pack = manifest.get("skipped_during_pack") or []
     expected, chunks = {}, {}
     for record in manifest.get("bundles", []):
         bundle = manifest_path.parent / record["bundle"]
@@ -224,7 +223,7 @@ def main():
         stage.replace(output)
     finally:
         if stage.exists(): shutil.rmtree(stage)
-    report = {"status": "success", "manifest": manifest_path.name, "bundles": [x["bundle"] for x in manifest["bundles"]], "output": str(output), "selected_files": len(manifest["selected_files"]), "restored_entries": len(files), "sha256_checked": sum(bool(e[min(e)].get("sha256")) for e in expected.values()), "manifest_size_mismatches": sum(len(files[n]) != e[sorted(e)[0]]["size_bytes"] for n, e in expected.items())}
+    report = {"status": "success", "manifest": manifest_path.name, "bundles": [x["bundle"] for x in manifest["bundles"]], "output": str(output), "selected_files": len(manifest["selected_files"]), "restored_entries": len(files), "sha256_checked": sum(bool(e[min(e)].get("sha256")) for e in expected.values()), "manifest_size_mismatches": sum(len(files[n]) != e[sorted(e)[0]]["size_bytes"] for n, e in expected.items()), "skipped_during_pack": skipped_during_pack}
     (output / "RECONSTRUCTION_REPORT.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
 
@@ -290,7 +289,7 @@ python3 extract_ai_context.py \
   --output '.ai-context/packages/<manifest-identity>'
 ```
 
-5. Require exit status `0`, `status: success`, zero skipped-during-pack entries, and a readable reconstruction report.
+5. Require exit status `0`, `status: success`, and a readable reconstruction report. Record skipped-during-pack entries as unavailable evidence; block only when an omitted file is materially required and no reliable current session baseline or other exact source can support the coding or design decision. Otherwise continue all supported work and request only the exact blocking files.
 6. Select the exact repository byte representation by the unique manifest `size_bytes` match, including terminal-newline state. Record its SHA-256. If the manifest SHA-256 matches only a transport-normalized candidate with a different size, preserve the size-selected bytes, report the normalization mismatch, and do not claim byte-hash equality.
 7. Before diff generation, compute and record `git hash-object -- <path>` for every target preimage. If a prior `gapply` log supplies a live blob hash, require equality.
 8. Merge only `manifest.selected_files` into `.ai-context/live-tree/`, preserving repository-relative paths and exact bytes. Do not merge the file-tree report as source code.
@@ -400,7 +399,7 @@ Start with the smallest likely file set for discovery efficiency, but do not tre
 
 A file-tree entry proves only that a path exists. It does not make the file editable. Require exact current file content before modifying an existing file.
 
-Reuse exact files already available in the current session unless they are inaccessible, incomplete, conflicting, disproven, or stale because the user or an external action changed the repository. Ask once only for the exact missing or updated paths, and state why the current copies cannot be trusted.
+Reuse exact files already available in the current session, including validated live-tree files and reconstructable confirmed patch postimages, unless they are inaccessible, incomplete, conflicting, disproven, or evidenced stale. Before requesting any path, check session anchors, ledgers, retained artifacts, prior validated packages, and current attachments. Never request a reliably reusable unchanged file merely because it is absent from the newest partial manifest. Ask once only for the smallest high-signal set of genuinely missing or changed files, and state the concrete decision or edit each requested path unlocks.
 
 ## Implementation Discipline
 
