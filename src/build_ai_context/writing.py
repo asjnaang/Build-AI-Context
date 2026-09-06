@@ -22,13 +22,13 @@ from build_ai_context.constants import (
 )
 from build_ai_context.models import FileChunk, SourceFile
 
-_PROMPT_MD_PATH = Path(__file__).parent / "prompt.md"
+_BAIC_PROMPT_MD_PATH = Path(__file__).parent / "baic_prompt.md"
 
 
-def get_prompt_md_content() -> str:
-    """Return the prompt.md content from the bundled file."""
-    if _PROMPT_MD_PATH.exists():
-        return _PROMPT_MD_PATH.read_text(encoding="utf-8")
+def get_baic_prompt_md_content() -> str:
+    """Return the baic_prompt.md content from the bundled file."""
+    if _BAIC_PROMPT_MD_PATH.exists():
+        return _BAIC_PROMPT_MD_PATH.read_text(encoding="utf-8")
     return ""
 
 
@@ -250,8 +250,8 @@ def write_bundles_and_manifest(
         else:
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
-    # Prepare prompt.md content to prepend to every bundle
-    prompt_content = get_prompt_md_content()
+    # Prepare baic_prompt.md content to prepend to every bundle
+    prompt_content = get_baic_prompt_md_content()
 
     # Filetree content for the first bundle
     if filetree_content is None and filetree_name:
@@ -259,9 +259,9 @@ def write_bundles_and_manifest(
         if filetree_path.exists():
             filetree_content = filetree_path.read_text(encoding="utf-8")
 
-    # Write standalone prompt.md file in the output directory
-    prompt_md_path = output_dir / "prompt.md"
-    prompt_md_path.write_text(prompt_content, encoding="utf-8")
+    # Write standalone baic_prompt.md file in the output directory
+    baic_prompt_md_path = output_dir / "baic_prompt.md"
+    baic_prompt_md_path.write_text(prompt_content, encoding="utf-8")
 
     for index, bundle in enumerate(bundles, start=1):
         bundle_name = f"{folder_name}_bundle_{index:03d}_{timestamp}.txt"
