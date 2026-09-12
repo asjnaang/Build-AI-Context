@@ -104,6 +104,7 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `--paths` | Export by path/filename | `--paths src tests` |
 | `--keywords` | Search in code content | `--keywords TODO FIXME` |
 | `--task` | Replace the generated prompt's Task Contract placeholder | `--task "Fix the reported issue"` |
+| `--task-clipboard`, `--tc` | Read the Task Contract from the macOS clipboard | `--tc` |
 | `--non-interactive` | Run without prompts | `--non-interactive` |
 | `--all` | Export everything supported without prompts | `baic . --all` |
 | `--max-file-lines` | Skip repo source files with ≥ N lines when bundling (default: 3000; `0` = no limit). Bundle output size stays fixed at 8000 lines. | `--max-file-lines 10000` |
@@ -334,6 +335,22 @@ baic . --non-interactive --paths src/components src/utils \
 The task replaces the placeholder under `## Task Contract` in the generated
 `baic_prompt.md`. Omit `--task` to keep the placeholder unchanged.
 
+For long multiline tasks, JSON, quotes, or other shell-sensitive content, copy the
+complete task and use `--tc` (or `--task-clipboard`). The CLI reads the clipboard
+internally, so the content is not parsed by the shell:
+
+```bash
+baic . --non-interactive --paths src/components src/utils --tc
+```
+
+Simple aliases are sufficient:
+
+```zsh
+alias baicp='baic . --non-interactive --paths'
+alias baick='baic . --non-interactive --keywords'
+alias baica='baic . --all'
+```
+
 ### Full export with overview
 
 ```bash
@@ -370,7 +387,8 @@ Example prompt to AI:
 ```
 usage: build-ai-context [-h] [--max-file-lines N] [--output-dir OUTPUT_DIR]
                        [--non-interactive] [--categories [CATEGORIES ...]]
-                       [--paths [PATHS ...]] [--keywords [KEYWORDS ...]] [--task TASK]
+                       [--paths [PATHS ...]] [--keywords [KEYWORDS ...]]
+                       [--task TASK | --task-clipboard]
                        [--include-secret-files] [--project-overview]
                        [--tree] [--graph] [--format {txt,json}] [--redact] [--version]
                        [project_root]
@@ -394,6 +412,7 @@ options:
   --paths PATHS         Files/folders to export
   --keywords KEYWORDS   Keywords to search in file content
   --task TASK            Replace the Task Contract placeholder in baic_prompt.md
+  --task-clipboard, --tc Read the Task Contract from the macOS clipboard
   --include-secret-files Include secret-like files
   --project-overview    Generate PROJECT_OVERVIEW.txt
 ```
