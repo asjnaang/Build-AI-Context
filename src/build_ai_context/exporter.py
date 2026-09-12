@@ -131,6 +131,12 @@ class CodeExporter:
         """Calculate the overhead lines added by chunk headers and footers."""
         return chunking.chunk_overhead_lines(self.redact)
 
+    def force_bundle_json_files(
+        self, files: Sequence[SourceFile], max_file_lines: int | None
+    ) -> Tuple[List[SourceFile], List[Dict[str, object]]]:
+        """Create representative in-memory samples for oversized JSON files."""
+        return chunking.force_bundle_json_files(files, max_file_lines)
+
     def split_into_chunks(
         self,
         files: Sequence[SourceFile],
@@ -247,6 +253,7 @@ class CodeExporter:
         project_overview: bool = False,
         include_filetree: bool = True,
         task: Optional[str] = None,
+        force_bundle: bool = False,
     ) -> ExportResult:
         """Run the full export process."""
         root = Path(project_root or Path.cwd()).expanduser().resolve()
@@ -305,6 +312,11 @@ class CodeExporter:
 
         # Bundle packing size defaults to DEFAULT_MAX_LINES (8000) via max_lines.
         # max_file_lines only controls which source files are skipped for size.
+        force_bundle_events: List[Dict[str, object]] = []
+        if force_bundle:
+            selected_files, force_bundle_events = self.force_bundle_json_files(
+                selected_files, max_file_lines
+            )
         chunks, split_items = self.split_into_chunks(
             selected_files, max_lines, max_file_lines=max_file_lines
         )
@@ -314,6 +326,7 @@ class CodeExporter:
         ]
         bundles, skipped_during_pack = self.pack_chunks(chunks, max_lines)
         skipped_during_processing = skipped_during_split + skipped_during_pack
+        warnings.extend(force_bundle_events)
 
         out_dir = (
             Path(output_dir).expanduser().resolve()
