@@ -91,6 +91,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Keywords to search in file content (non-interactive mode).",
     )
     parser.add_argument(
+        "--task",
+        default=None,
+        help="Replace the Task Contract placeholder in the generated baic_prompt.md.",
+    )
+    parser.add_argument(
         "--include-secret-files",
         action="store_true",
         help="Include files that look like secrets (.env, *.pem, *.key, keystores, etc.).",
@@ -374,6 +379,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             filetree_name=filetree_name,
             filetree_content=filetree_content,
             timestamp=timestamp,
+            task=args.task,
         )
 
         overview_path = None

@@ -209,6 +209,7 @@ class CodeExporter:
         timestamp: Optional[str] = None,
         max_file_lines: int | None = None,
         warnings: Sequence[Dict[str, object]] = (),
+        task: Optional[str] = None,
     ) -> Path:
         """Write bundles and manifest to the output directory."""
         return writing.write_bundles_and_manifest(
@@ -227,6 +228,7 @@ class CodeExporter:
             self.redact,
             max_file_lines=max_file_lines,
             warnings=warnings,
+            task=task,
         )
 
     # -------------------------------------------------------------------------
@@ -244,6 +246,7 @@ class CodeExporter:
         interactive: bool = True,
         project_overview: bool = False,
         include_filetree: bool = True,
+        task: Optional[str] = None,
     ) -> ExportResult:
         """Run the full export process."""
         root = Path(project_root or Path.cwd()).expanduser().resolve()
@@ -344,6 +347,7 @@ class CodeExporter:
             filetree_name=filetree_name,
             filetree_content=filetree_content,
             timestamp=timestamp,
+            task=task,
         )
 
         overview_path = None
