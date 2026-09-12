@@ -23,13 +23,17 @@ from build_ai_context.constants import (
 from build_ai_context.models import FileChunk, SourceFile
 
 _BAIC_PROMPT_MD_PATH = Path(__file__).parent / "baic_prompt.md"
+_TASK_PLACEHOLDER = "[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]"
 
 
-def get_baic_prompt_md_content() -> str:
-    """Return the baic_prompt.md content from the bundled file."""
-    if _BAIC_PROMPT_MD_PATH.exists():
-        return _BAIC_PROMPT_MD_PATH.read_text(encoding="utf-8")
-    return ""
+def get_baic_prompt_md_content(task: Optional[str] = None) -> str:
+    """Return the bundled prompt, optionally replacing its task placeholder."""
+    if not _BAIC_PROMPT_MD_PATH.exists():
+        return ""
+    content = _BAIC_PROMPT_MD_PATH.read_text(encoding="utf-8")
+    if task is None:
+        return content
+    return content.replace(_TASK_PLACEHOLDER, task, 1)
 
 
 def detect_dependency_files(all_files: Sequence[SourceFile]) -> List[str]:
@@ -208,6 +212,7 @@ def write_bundles_and_manifest(
     redact: bool = False,
     max_file_lines: Optional[int] = None,
     warnings: Sequence[Dict[str, object]] = (),
+    task: Optional[str] = None,
 ) -> Path:
     """Write bundles and manifest to the output directory."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -251,7 +256,7 @@ def write_bundles_and_manifest(
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
     # Prepare baic_prompt.md content to prepend to every bundle
-    prompt_content = get_baic_prompt_md_content()
+    prompt_content = get_baic_prompt_md_content(task)
 
     # Filetree content for the first bundle
     if filetree_content is None and filetree_name:

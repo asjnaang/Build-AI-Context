@@ -128,3 +128,38 @@ def test_interactive_export_can_force_include_oversized_file(tmp_path, monkeypat
     assert manifest["warnings"][0]["path"] == "oversized.py"
     bundle_text = "".join(path.read_text() for path in output.glob("*_bundle_*.txt"))
     assert "===== BEGIN FILE: oversized.py =====" in bundle_text
+
+
+def test_task_flag_replaces_generated_prompt_placeholder(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("print('hello')\n")
+    output = tmp_path / "output"
+    task = "Go through these files and fix the issues we discussed before."
+    args = build_parser().parse_args(
+        [str(project), "--all", "--output-dir", str(output), "--task", task]
+    )
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    prompt = (output / "baic_prompt.md").read_text()
+    assert task in prompt
+    assert "[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]" not in prompt
+    assert f"## Task Contract\n\n```\n{task}\n```" in prompt
+
+
+def test_generated_prompt_keeps_placeholder_without_task(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("print('hello')\n")
+    output = tmp_path / "output"
+    args = build_parser().parse_args(
+        [str(project), "--all", "--output-dir", str(output)]
+    )
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    prompt = (output / "baic_prompt.md").read_text()
+    assert "[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]" in prompt
