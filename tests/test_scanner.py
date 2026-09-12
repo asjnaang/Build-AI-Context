@@ -306,5 +306,43 @@ class TestCategorySelection:
         assert result == expected
 
 
+class TestGitignoreAwareTraversal:
+    """Regression coverage for pruning and nested repository ignore rules."""
+
+    def test_root_gitignore_prunes_ignored_repository_before_descent(self, tmp_path, monkeypatch):
+        included = tmp_path / "frontend"
+        ignored = tmp_path / "unused-repo"
+        included.mkdir()
+        ignored.mkdir()
+        (included / "app.ts").write_text("export const app = true")
+        (ignored / "never-read.py").write_text("raise AssertionError")
+        (tmp_path / ".gitignore").write_text("unused-repo/\n")
+
+        original_read = Path.read_text
+
+        def guarded_read(path, *args, **kwargs):
+            if path.name == "never-read.py":
+                raise AssertionError("ignored repository was traversed")
+            return original_read(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", guarded_read)
+        files, skipped = scan_supported_files(tmp_path, skip_secret_files=True)
+
+        assert [item.rel_path.as_posix() for item in files] == ["frontend/app.ts"]
+        assert skipped[".gitignore"] == 1
+
+    def test_nested_gitignore_is_applied_within_each_repository(self, tmp_path):
+        repo = tmp_path / "backend"
+        generated = repo / "generated"
+        generated.mkdir(parents=True)
+        (repo / ".gitignore").write_text("generated/\n")
+        (repo / "main.py").write_text("print('included')")
+        (generated / "large.py").write_text("print('ignored')")
+
+        files, skipped = scan_supported_files(tmp_path, skip_secret_files=True)
+
+        assert [item.rel_path.as_posix() for item in files] == ["backend/main.py"]
+        assert skipped[".gitignore"] == 1
+
 if __name__ == "__main__":
     pytest.main([__file__])
