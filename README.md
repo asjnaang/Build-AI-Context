@@ -103,6 +103,7 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `--categories` | Export by category | `--categories python typescript` |
 | `--paths` | Export by path/filename | `--paths src tests` |
 | `--keywords` | Search in code content | `--keywords TODO FIXME` |
+| `--task` | Replace the generated prompt's Task Contract placeholder | `--task "Fix the reported issue"` |
 | `--non-interactive` | Run without prompts | `--non-interactive` |
 | `--all` | Export everything supported without prompts | `baic . --all` |
 | `--max-file-lines` | Skip repo source files with ≥ N lines when bundling (default: 3000; `0` = no limit). Bundle output size stays fixed at 8000 lines. | `--max-file-lines 10000` |
@@ -323,6 +324,16 @@ baic . --non-interactive --keywords TODO
 baic . --non-interactive --paths src/components src/utils
 ```
 
+### Include the task in the generated AI prompt
+
+```bash
+baic . --non-interactive --paths src/components src/utils \
+    --task "Review these files and fix the issues we discussed."
+```
+
+The task replaces the placeholder under `## Task Contract` in the generated
+`baic_prompt.md`. Omit `--task` to keep the placeholder unchanged.
+
 ### Full export with overview
 
 ```bash
@@ -359,7 +370,7 @@ Example prompt to AI:
 ```
 usage: build-ai-context [-h] [--max-file-lines N] [--output-dir OUTPUT_DIR]
                        [--non-interactive] [--categories [CATEGORIES ...]]
-                       [--paths [PATHS ...]] [--keywords [KEYWORDS ...]]
+                       [--paths [PATHS ...]] [--keywords [KEYWORDS ...]] [--task TASK]
                        [--include-secret-files] [--project-overview]
                        [--tree] [--graph] [--format {txt,json}] [--redact] [--version]
                        [project_root]
@@ -382,6 +393,7 @@ options:
   --categories CATS     Categories to export
   --paths PATHS         Files/folders to export
   --keywords KEYWORDS   Keywords to search in file content
+  --task TASK            Replace the Task Contract placeholder in baic_prompt.md
   --include-secret-files Include secret-like files
   --project-overview    Generate PROJECT_OVERVIEW.txt
 ```
