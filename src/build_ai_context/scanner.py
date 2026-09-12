@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import os
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -32,16 +33,45 @@ from build_ai_context.models import SourceFile
 # ---------------------------------------------------------------------------
 
 
+def _read_gitignore_lines(gitignore_path: Path) -> List[str]:
+    """Read one .gitignore without letting an encoding issue disable filtering."""
+    if not gitignore_path.is_file():
+        return []
+    try:
+        return gitignore_path.read_text(encoding=DEFAULT_TEXT_ENCODING).splitlines()
+    except UnicodeDecodeError:
+        return gitignore_path.read_text(errors="ignore").splitlines()
+
+
+def _rebase_gitignore_lines(lines: Sequence[str], base: Path) -> List[str]:
+    """Rebase patterns from a nested .gitignore to the scan root."""
+    if not base.parts:
+        return list(lines)
+    prefix = base.as_posix().rstrip("/")
+    rebased: List[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            rebased.append(line)
+            continue
+        negated = line.startswith("!")
+        pattern = line[1:] if negated else line
+        escaped_prefix = "!" if negated else ""
+        if pattern.startswith("/"):
+            rebased.append(f"{escaped_prefix}{prefix}/{pattern.lstrip('/')}")
+        elif "/" in pattern.rstrip("/"):
+            rebased.append(f"{escaped_prefix}{prefix}/{pattern}")
+        else:
+            rebased.append(f"{escaped_prefix}{prefix}/{pattern}")
+            rebased.append(f"{escaped_prefix}{prefix}/**/{pattern}")
+    return rebased
+
+
 def load_gitignore_spec(root: Path) -> pathspec.PathSpec:
     """Load .gitignore patterns from the project root."""
-    gitignore_path = root / ".gitignore"
-    patterns: List[str] = []
-    if gitignore_path.exists():
-        try:
-            patterns.extend(gitignore_path.read_text(encoding=DEFAULT_TEXT_ENCODING).splitlines())
-        except UnicodeDecodeError:
-            patterns.extend(gitignore_path.read_text(errors="ignore").splitlines())
-    return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
+    return pathspec.PathSpec.from_lines(
+        "gitwildmatch", _read_gitignore_lines(root / ".gitignore")
+    )
 
 
 def path_matches_any_pattern(rel_path: str, patterns: Iterable[str]) -> bool:
@@ -142,45 +172,69 @@ def sha256_of_lines(lines: Sequence[str]) -> str:
 def scan_supported_files(
     root: Path, skip_secret_files: bool
 ) -> Tuple[List[SourceFile], Dict[str, int]]:
-    """Scan the project root for supported files."""
-    gitignore_spec = load_gitignore_spec(root)
+    """Scan supported files while pruning ignored directories before descent."""
     discovered: List[SourceFile] = []
     skipped_reasons: Dict[str, int] = defaultdict(int)
+    inherited_patterns: Dict[Path, List[str]] = {
+        root: _read_gitignore_lines(root / ".gitignore")
+    }
 
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        rel_path = path.relative_to(root)
-        ignored, reason = is_ignored(rel_path, gitignore_spec, skip_secret_files)
-        if ignored:
-            skipped_reasons[reason] += 1
-            continue
-        category = detect_category(path)
-        if not category:
-            skipped_reasons["unsupported_type"] += 1
-            continue
-        if is_probably_binary(path):
-            skipped_reasons["binary"] += 1
-            continue
-        try:
-            lines = read_text_lines(path)
-        except OSError:
-            skipped_reasons["read_error"] += 1
-            continue
-        discovered.append(
-            SourceFile(
-                abs_path=path.resolve(),
-                rel_path=rel_path,
-                category=category,
-                line_count=len(lines),
-                size_bytes=path.stat().st_size,
-                sha256=sha256_of_lines(lines),
-                lines=lines,
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+        current_dir = Path(dirpath)
+        current_rel = current_dir.relative_to(root)
+        gitignore_lines = list(inherited_patterns.pop(current_dir, []))
+        if current_rel.parts:
+            gitignore_lines.extend(
+                _rebase_gitignore_lines(
+                    _read_gitignore_lines(current_dir / ".gitignore"), current_rel
+                )
             )
-        )
+        gitignore_spec = pathspec.PathSpec.from_lines("gitwildmatch", gitignore_lines)
+
+        kept_dirs: List[str] = []
+        for dirname in dirnames:
+            rel_dir = current_rel / dirname
+            ignored, reason = is_ignored(rel_dir, gitignore_spec, skip_secret_files)
+            if ignored:
+                skipped_reasons[reason] += 1
+            else:
+                kept_dirs.append(dirname)
+                inherited_patterns[current_dir / dirname] = gitignore_lines
+        dirnames[:] = kept_dirs
+
+        for filename in filenames:
+            path = current_dir / filename
+            rel_path = current_rel / filename
+            ignored, reason = is_ignored(rel_path, gitignore_spec, skip_secret_files)
+            if ignored:
+                skipped_reasons[reason] += 1
+                continue
+            category = detect_category(path)
+            if not category:
+                skipped_reasons["unsupported_type"] += 1
+                continue
+            if is_probably_binary(path):
+                skipped_reasons["binary"] += 1
+                continue
+            try:
+                lines = read_text_lines(path)
+                size_bytes = path.stat().st_size
+            except OSError:
+                skipped_reasons["read_error"] += 1
+                continue
+            discovered.append(
+                SourceFile(
+                    abs_path=path.resolve(),
+                    rel_path=rel_path,
+                    category=category,
+                    line_count=len(lines),
+                    size_bytes=size_bytes,
+                    sha256=sha256_of_lines(lines),
+                    lines=lines,
+                )
+            )
     discovered.sort(key=lambda item: item.rel_path.as_posix())
     return discovered, dict(sorted(skipped_reasons.items()))
-
 
 # ---------------------------------------------------------------------------
 # Selection helpers
