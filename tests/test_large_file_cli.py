@@ -1,5 +1,6 @@
 """Tests for oversized-file UX and non-interactive all-file exports."""
 import json
+import pytest
 from pathlib import Path
 
 from build_ai_context.cli import build_parser, run_exporter
@@ -163,3 +164,54 @@ def test_generated_prompt_keeps_placeholder_without_task(tmp_path):
     assert result == 0
     prompt = (output / "baic_prompt.md").read_text()
     assert "[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]" in prompt
+
+
+
+def test_task_clipboard_alias_reads_pbpaste_and_updates_prompt(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("print('hello')\n")
+    output = tmp_path / "output"
+    task = """Review this JSON:
+{"_meta": {"updated_by_display_name": "Example User (TS)"}}
+Do not reinterpret $HOME, *.json, or `commands`.
+"""
+    args = build_parser().parse_args(
+        [str(project), "--all", "--output-dir", str(output), "--tc"]
+    )
+    completed = __import__("subprocess").CompletedProcess(["pbpaste"], 0, task, "")
+    monkeypatch.setattr("build_ai_context.cli.subprocess.run", lambda *args, **kwargs: completed)
+    result, _, _ = run_exporter(args, None)
+    assert result == 0
+    assert task in (output / "baic_prompt.md").read_text()
+
+
+def test_task_clipboard_long_option_is_supported():
+    args = build_parser().parse_args(["--task-clipboard"])
+    assert args.task_clipboard is True
+
+
+def test_task_and_clipboard_are_mutually_exclusive():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--task", "one", "--tc"])
+
+
+def test_task_clipboard_rejects_empty_clipboard(monkeypatch):
+    from build_ai_context.cli import resolve_task_content
+    args = build_parser().parse_args(["--tc"])
+    completed = __import__("subprocess").CompletedProcess(["pbpaste"], 0, "", "")
+    monkeypatch.setattr("build_ai_context.cli.subprocess.run", lambda *args, **kwargs: completed)
+    with pytest.raises(ValueError, match="does not contain task text"):
+        resolve_task_content(args)
+
+
+def test_task_clipboard_reports_missing_pbpaste(monkeypatch):
+    from build_ai_context.cli import resolve_task_content
+    args = build_parser().parse_args(["--tc"])
+
+    def missing_pbpaste(*args, **kwargs):
+        raise FileNotFoundError
+
+    monkeypatch.setattr("build_ai_context.cli.subprocess.run", missing_pbpaste)
+    with pytest.raises(ValueError, match="requires the macOS pbpaste command"):
+        resolve_task_content(args)
