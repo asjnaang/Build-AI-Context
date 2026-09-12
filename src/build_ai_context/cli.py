@@ -5,6 +5,7 @@ Command-line interface for build_ai_context package.
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -90,10 +91,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Keywords to search in file content (non-interactive mode).",
     )
-    parser.add_argument(
+    task_group = parser.add_mutually_exclusive_group()
+    task_group.add_argument(
         "--task",
         default=None,
         help="Replace the Task Contract placeholder in the generated baic_prompt.md.",
+    )
+    task_group.add_argument(
+        "--task-clipboard",
+        "--tc",
+        action="store_true",
+        help="Read the Task Contract from the macOS clipboard using pbpaste.",
     )
     parser.add_argument(
         "--include-secret-files",
@@ -146,6 +154,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     return parser
 
+
+
+def resolve_task_content(args) -> str | None:
+    """Return task text from --task or the macOS clipboard."""
+    if not getattr(args, "task_clipboard", False):
+        return getattr(args, "task", None)
+    try:
+        completed = subprocess.run(
+            ["pbpaste"], check=True, capture_output=True, text=True
+        )
+    except FileNotFoundError as exc:
+        raise ValueError("--task-clipboard/--tc requires the macOS pbpaste command") from exc
+    except subprocess.CalledProcessError as exc:
+        raise ValueError("Unable to read task content from the macOS clipboard") from exc
+    if not completed.stdout:
+        raise ValueError("The macOS clipboard does not contain task text")
+    return completed.stdout
 
 def main() -> int:
     """Main entry point for the CLI."""
@@ -241,6 +266,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         exporter = CodeExporter(redact=getattr(args, "redact", False))
 
     try:
+        task = resolve_task_content(args)
         root = Path(args.project_root).expanduser().resolve()
         if not root.exists():
             print(f"Error: Project root does not exist: {root}", file=sys.stderr)
@@ -379,7 +405,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             filetree_name=filetree_name,
             filetree_content=filetree_content,
             timestamp=timestamp,
-            task=args.task,
+            task=task,
         )
 
         overview_path = None
