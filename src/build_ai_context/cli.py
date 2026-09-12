@@ -322,8 +322,11 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
                     return 0, all_files, skipped_reasons
             else:
                 path_inputs = args.paths
-                if args.paths and len(args.paths) == 1:
-                    path_inputs = exporter.parse_intelligent_input(args.paths[0], all_files, root)
+                if args.paths:
+                    raw_path_input = "\n".join(args.paths)
+                    path_inputs = exporter.parse_intelligent_input(
+                        raw_path_input, all_files, root
+                    )
                     if not path_inputs:
                         path_inputs = args.paths
                 selected_files, selection_metadata = exporter.non_interactive_select_files(
