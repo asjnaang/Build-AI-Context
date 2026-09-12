@@ -58,6 +58,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--force-bundle",
+        action="store_true",
+        help=(
+            "For oversized JSON data files, bundle an in-memory representative "
+            "sample instead of skipping the file. Source files are never modified."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         default=None,
         help="Optional output directory. Defaults to a timestamped folder under the current directory.",
@@ -348,12 +356,18 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             f"Selected {len(selected_files)} file(s) out of {len(all_files)} supported file(s)."
         )
 
+        force_bundle_events: List[dict] = []
+        if args.force_bundle:
+            selected_files, force_bundle_events = exporter.force_bundle_json_files(
+                selected_files, args.max_file_lines
+            )
         chunks, split_items = exporter.split_into_chunks(
             selected_files,
             bundle_max_lines,
             max_file_lines=args.max_file_lines,
         )
         warnings = [item for item in split_items if item.get("reason") == "large_file_warning"]
+        warnings.extend(force_bundle_events)
         skipped_during_split = [
             item for item in split_items if item.get("reason") != "large_file_warning"
         ]
