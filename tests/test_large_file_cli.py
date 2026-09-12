@@ -215,3 +215,74 @@ def test_task_clipboard_reports_missing_pbpaste(monkeypatch):
     monkeypatch.setattr("build_ai_context.cli.subprocess.run", missing_pbpaste)
     with pytest.raises(ValueError, match="requires the macOS pbpaste command"):
         resolve_task_content(args)
+
+
+
+def test_multiple_comma_terminated_path_arguments_are_normalized(tmp_path):
+    project = tmp_path / "project"
+    first = project / "src" / "service.py"
+    second = project / "src" / "materialization.py"
+    third = project / "tests" / "test_service.py"
+    for path in (first, second, third):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {path.name}\n")
+    output = tmp_path / "output"
+    args = build_parser().parse_args(
+        [
+            str(project),
+            "--non-interactive",
+            "--output-dir",
+            str(output),
+            "--paths",
+            "src/service.py,",
+            "src/materialization.py,",
+            "tests/test_service.py",
+            "--task",
+            "Review all selected files.",
+        ]
+    )
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    assert manifest["selected_files"] == [
+        "src/materialization.py",
+        "src/service.py",
+        "tests/test_service.py",
+    ]
+    assert manifest["selection"]["missing_paths"] == []
+
+
+def test_line_comma_and_mixed_path_input_select_the_same_files(tmp_path):
+    project = tmp_path / "project"
+    requested = ["src/one.py", "src/two.py", "tests/test_one.py"]
+    for relative_path in requested:
+        path = project / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {path.name}\n")
+
+    variants = [
+        "\n".join(requested),
+        ",".join(requested),
+        ",\n".join(requested),
+    ]
+    for index, path_input in enumerate(variants):
+        output = tmp_path / f"output-{index}"
+        args = build_parser().parse_args(
+            [
+                str(project),
+                "--non-interactive",
+                "--output-dir",
+                str(output),
+                "--paths",
+                path_input,
+            ]
+        )
+
+        result, _, _ = run_exporter(args, None)
+
+        assert result == 0
+        manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+        assert manifest["selected_files"] == sorted(requested)
+        assert manifest["selection"]["missing_paths"] == []
