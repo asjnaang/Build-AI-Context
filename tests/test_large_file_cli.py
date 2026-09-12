@@ -286,3 +286,75 @@ def test_line_comma_and_mixed_path_input_select_the_same_files(tmp_path):
         manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
         assert manifest["selected_files"] == sorted(requested)
         assert manifest["selection"]["missing_paths"] == []
+
+
+
+def test_force_bundle_defaults_to_false():
+    assert build_parser().parse_args([]).force_bundle is False
+
+
+def test_force_bundle_samples_json_without_modifying_source(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    source = project / "catalog.json"
+    original = json.dumps({
+        "_meta": {"version": 7},
+        **{f"page-{i}": {"state": str(i), "aa_data": {"kind": "page"}} for i in range(30)},
+        **{f"click-{i}": {"aa_data": {"kind": "click", "name": str(i)}} for i in range(30)},
+        **{f"error-{i}": {"aa_data": {"error": str(i)}} for i in range(30)},
+    }, indent=2)
+    source.write_text(original)
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project), "--all", "--output-dir", str(output),
+        "--max-file-lines", "100", "--force-bundle",
+    ])
+    result, _, _ = run_exporter(args, None)
+    assert result == 0
+    assert source.read_text() == original
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    sample = next(item for item in manifest["warnings"]
+                  if item["reason"] == "force_bundled_json_sample")
+    assert sample["bundled_line_count"] < 100
+    assert sample["representatives_per_shape"] >= 3
+    bundle = next(output.glob("*_bundle_*.txt")).read_text()
+    assert "===== BEGIN FILE: catalog.json =====" in bundle
+    assert '"_meta"' in bundle
+
+
+def test_force_bundle_preserves_array_shapes(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    source = project / "values.json"
+    source.write_text(json.dumps({"items": [
+        *({"kind": "object", "value": i} for i in range(25)),
+        *(f"scalar-{i}" for i in range(25)),
+    ]}, indent=2))
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project), "--all", "--output-dir", str(output),
+        "--max-file-lines", "50", "--force-bundle",
+    ])
+    result, _, _ = run_exporter(args, None)
+    assert result == 0
+    bundle = next(output.glob("*_bundle_*.txt")).read_text()
+    assert '"kind": "object"' in bundle
+    assert '"scalar-0"' in bundle
+
+
+def test_force_bundle_leaves_invalid_json_skipped(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "invalid.json").write_text("{\n" + "not-json\n" * 20 + "}")
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project), "--all", "--output-dir", str(output),
+        "--max-file-lines", "10", "--force-bundle",
+    ])
+    result, _, _ = run_exporter(args, None)
+    assert result == 0
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    assert any(item["reason"] == "large_file_exceeds_skip_threshold"
+               for item in manifest["skipped_during_pack"])
+    assert any(item["reason"] == "force_bundle_invalid_json"
+               for item in manifest["warnings"])
