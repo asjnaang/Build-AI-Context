@@ -108,6 +108,7 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `--non-interactive` | Run without prompts | `--non-interactive` |
 | `--all` | Export everything supported without prompts | `baic . --all` |
 | `--max-file-lines` | Skip repo source files with ≥ N lines when bundling (default: 3000; `0` = no limit). Bundle output size stays fixed at 8000 lines. | `--max-file-lines 10000` |
+| `--force-bundle` | Sample oversized JSON data in memory without modifying source files | `--max-file-lines 1000 --force-bundle` |
 | `--output-dir` | Custom output folder | `--output-dir ./my-bundles` |
 | `--project-overview` | Generate architecture overview | `--project-overview` |
 | `--include-secret-files` | Include .env, keys, etc. (careful!) | `--include-secret-files` |
@@ -294,6 +295,15 @@ Redaction targets: API keys, tokens, passwords, JWTs, AWS keys, GitHub tokens, e
 - **>= 1500 lines**: Exported and reported under manifest `warnings`
 - **>= 3000 lines**: Excluded by default; interactive mode lets you select files to include anyway
 
+Use `--force-bundle` when oversized JSON files are reference data and retaining their
+schema and representative values is more useful than skipping them. The exporter
+retains up to five representatives per structural shape, reducing to a minimum of
+three when necessary. Sampling is in memory and never rewrites source files.
+
+```bash
+baic . --non-interactive --paths data --max-file-lines 1000 --force-bundle
+```
+
 ### Secrets (Skipped by default, include with `--include-secret-files`)
 
 - `.env` files and variants
@@ -388,7 +398,7 @@ Example prompt to AI:
 usage: build-ai-context [-h] [--max-file-lines N] [--output-dir OUTPUT_DIR]
                        [--non-interactive] [--categories [CATEGORIES ...]]
                        [--paths [PATHS ...]] [--keywords [KEYWORDS ...]]
-                       [--task TASK | --task-clipboard]
+                       [--task TASK | --task-clipboard] [--force-bundle]
                        [--include-secret-files] [--project-overview]
                        [--tree] [--graph] [--format {txt,json}] [--redact] [--version]
                        [project_root]
@@ -406,6 +416,7 @@ options:
   --max-file-lines N    Skip repo source files with >= N lines (default: 3000;
                         0 disables the per-file limit). Output bundles are
                         always packed to 8000 lines max.
+  --force-bundle        Sample oversized JSON data without modifying source files
   --output-dir DIR      Custom output directory
   --non-interactive     Run without prompts
   --categories CATS     Categories to export
