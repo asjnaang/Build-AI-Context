@@ -19,6 +19,8 @@ from build_ai_context.chunking import render_chunk_block
 from build_ai_context.constants import (
     CATEGORY_DESCRIPTIONS,
     DEFAULT_TEXT_ENCODING,
+    generate_timestamp,
+    local_now,
 )
 from build_ai_context.models import FileChunk, SourceFile
 
@@ -134,7 +136,7 @@ def write_project_overview(
     lines.append("=" * 60)
     lines.append(f"PROJECT OVERVIEW: {root.name}")
     lines.append("=" * 60)
-    lines.append(f"Generated: {datetime.now(timezone.utc).isoformat()}")
+    lines.append(f"Generated: {local_now().isoformat()}")
     lines.append(f"Manifest: {manifest_name}")
     lines.append("")
 
@@ -253,7 +255,7 @@ def write_bundles_and_manifest(
         if len(parts) >= 3:
             timestamp = parts[-1]
         else:
-            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            timestamp = generate_timestamp()
 
     # Prepare baic_prompt.md content to prepend to every bundle
     prompt_content = get_baic_prompt_md_content(task)

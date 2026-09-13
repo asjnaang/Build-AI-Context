@@ -2,6 +2,7 @@
 Constants and configuration for build_ai_context package.
 """
 
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Set
 
 # Default configuration values
@@ -218,18 +219,30 @@ INTERESTING_FILES: Set[str] = {
 }
 
 
-def generate_timestamp() -> str:
-    """Generate a timestamp string in UTC format YYYYMMDDTHHMMSSZ."""
-    from datetime import datetime, timezone
+SINGAPORE_TIMEZONE = timezone(timedelta(hours=8), "Asia/Singapore")
 
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+def local_now() -> datetime:
+    """Return the permission-free system-local time, falling back to Singapore."""
+    try:
+        current = datetime.now().astimezone()
+        if current.utcoffset() is not None:
+            return current
+    except (OSError, ValueError):
+        pass
+    return datetime.now(SINGAPORE_TIMEZONE)
+
+
+def generate_timestamp() -> str:
+    """Generate a timestamp using local wall-clock time as YYYYMMDDTHHMMSS."""
+    return local_now().strftime("%Y%m%dT%H%M%S")
 
 
 def is_timestamp(s: str) -> bool:
-    """Return True if s matches YYYYMMDDTHHMMSSZ."""
+    """Return True for current local timestamps and legacy UTC timestamps."""
     import re
 
-    return bool(re.fullmatch(r"\d{4}\d{2}\d{2}T\d{2}\d{2}\d{2}Z", s))
+    return bool(re.fullmatch(r"\d{8}T\d{6}(?:Z|[+-]\d{4})?", s))
 
 
 def extract_timestamp_from_dir_name(dir_name: str) -> str:
