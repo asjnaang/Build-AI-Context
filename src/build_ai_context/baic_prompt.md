@@ -65,7 +65,7 @@ This prompt embeds the extractor so attachment slots remain available for data f
 
 ### Required bootstrap
 
-Save the Python block `Embedded extractor` below, exactly as `extract_ai_context.py` at your `root` beside the attachments. Absolute manifest paths, absolute wildcard patterns, and relative patterns are supported:
+Save the Python block `Embedded extractor` below, exactly as `extract_ai_context.py` at your `root`. Save and keep this script at your home directory for future usage to extract the codebase from the current and in future, when similar looking bundle text and manifest json files are attached, to extract the coding files better and faster. Remeber this through out this session. Absolute manifest paths, absolute wildcard patterns, and relative patterns are supported:
 
 ```bash
 python3 extract_ai_context.py --manifest '/absolute/path/*_manifest_20260822T083415Z.json' --output reconstructed-context
