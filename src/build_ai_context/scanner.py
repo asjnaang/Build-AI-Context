@@ -282,8 +282,36 @@ def parse_csv_input(raw: str) -> List[str]:
     return [token.strip() for token in raw.split(",") if token.strip()]
 
 
+def _resolve_selection_token(
+    token: str, all_path_strs: set[str], all_names: set[str], root: Path
+) -> List[str]:
+    """Resolve one selection token without broad substring matching."""
+    candidate = token.strip()
+    if not candidate:
+        return []
+    if Path(candidate).is_absolute():
+        try:
+            candidate = Path(candidate).resolve().relative_to(root).as_posix()
+        except ValueError:
+            return []
+    if candidate in all_path_strs:
+        return [candidate]
+    if candidate in all_names:
+        return sorted(
+            path for path in all_path_strs
+            if path == candidate or path.endswith("/" + candidate)
+        )
+    suffix_matches = sorted(
+        path for path in all_path_strs if path.endswith("/" + candidate)
+    )
+    if suffix_matches:
+        return suffix_matches
+    directory_prefix = candidate.rstrip("/") + "/"
+    return sorted(path for path in all_path_strs if path.startswith(directory_prefix))
+
+
 def parse_intelligent_input(raw: str, files: Sequence[SourceFile], root: Path) -> List[str]:
-    """Intelligently parse input that might have mixed commas, spaces, or no separators."""
+    """Parse line-, comma-, semicolon-, or legacy space-separated path input."""
     if not raw.strip():
         return []
 
@@ -291,88 +319,41 @@ def parse_intelligent_input(raw: str, files: Sequence[SourceFile], root: Path) -
     all_names = {f.rel_path.name for f in files}
     found_paths: List[str] = []
 
-    parts = [p.strip() for p in re.split(r"[,;\s]+", raw) if p.strip()]
+    def add_matches(token: str) -> bool:
+        matches = _resolve_selection_token(token, all_path_strs, all_names, root)
+        for match in matches:
+            if match not in found_paths:
+                found_paths.append(match)
+        return bool(matches)
 
-    for part in parts:
-        if Path(part).is_absolute():
-            try:
-                rel = Path(part).resolve().relative_to(root)
-                part = rel.as_posix()
-            except ValueError:
-                pass
-
-        if part in all_path_strs:
-            if part not in found_paths:
-                found_paths.append(part)
+    for raw_line in raw.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if add_matches(line.rstrip(",;").strip()):
             continue
 
-        if part in all_names:
-            for p in all_path_strs:
-                if p.endswith("/" + part) or p == part:
-                    if p not in found_paths:
-                        found_paths.append(p)
-            continue
-
-        exact_matches = [p for p in all_path_strs if p == part or p.endswith("/" + part)]
-        if exact_matches:
-            for m in exact_matches:
-                if m not in found_paths:
-                    found_paths.append(m)
-            continue
-
-        folder_matches = [
-            p for p in all_path_strs if p.startswith(part + "/") or "/" + part + "/" in p
+        separator_parts = [
+            part.strip() for part in re.split(r"[,;]+", line) if part.strip()
         ]
-        if folder_matches:
-            for m in folder_matches:
-                if m not in found_paths:
-                    found_paths.append(m)
+        if len(separator_parts) > 1:
+            for part in separator_parts:
+                add_matches(part)
             continue
 
-        contains_matches = [p for p in all_path_strs if part in p]
-        if contains_matches:
-            for m in contains_matches:
-                if m not in found_paths:
-                    found_paths.append(m)
-            continue
-
-        partial = [
-            p
-            for p in all_path_strs
-            if p.replace("/", "")
-            .replace("\\", "")
-            .startswith(part.replace("/", "").replace("\\", ""))
-        ]
-        if partial:
-            for m in partial:
-                if m not in found_paths:
-                    found_paths.append(m)
-            continue
-
-        for ext in [
-            ".dart",
-            ".py",
-            ".js",
-            ".ts",
-            ".kt",
-            ".java",
-            ".swift",
-            ".md",
-            ".json",
-            ".yaml",
-            ".xml",
-            ".txt",
-            ".properties",
-        ]:
-            if ext in part:
-                matching_files = [
-                    p for p in all_path_strs if p.endswith(part) or p.endswith("/" + part)
-                ]
-                for m in matching_files:
-                    if m not in found_paths:
-                        found_paths.append(m)
-                if matching_files:
-                    break
+        # Backward compatibility for inputs such as "main.py utils.py". Only
+        # accept whitespace splitting when every token independently resolves.
+        whitespace_parts = line.split()
+        if len(whitespace_parts) > 1:
+            resolved = [
+                _resolve_selection_token(part, all_path_strs, all_names, root)
+                for part in whitespace_parts
+            ]
+            if all(resolved):
+                for matches in resolved:
+                    for match in matches:
+                        if match not in found_paths:
+                            found_paths.append(match)
 
     return found_paths
 

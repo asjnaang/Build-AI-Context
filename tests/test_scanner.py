@@ -97,6 +97,73 @@ class TestParseIntelligentInput:
         assert "docs/guide.md/index.md" in result
 
 
+    def test_paths_with_spaces_do_not_select_unrelated_files(self, tmp_path):
+        requested = [
+            "services/data/North Region Config_JSON_Consolidate_v1.81.json",
+            "services/data/west desk config_consolidated json_v1.8.json",
+            "services/data/east desk config_consolidated json_v18.json",
+        ]
+        unrelated = [
+            "frontend/Settings/SettingsPanel.tsx",
+            "frontend/InputForms/InputAccordion.tsx",
+            "services/compare_search_algorithms.py",
+        ]
+        files = []
+        for relative_path in requested + unrelated:
+            path = tmp_path / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("content")
+            files.append(
+                SourceFile(
+                    abs_path=path,
+                    rel_path=Path(relative_path),
+                    category="config_docs",
+                    line_count=1,
+                    size_bytes=7,
+                    sha256="dummy",
+                    lines=["content"],
+                )
+            )
+
+        raw = "\n".join(requested)
+        result = parse_intelligent_input(raw, files, tmp_path)
+
+        assert result == requested
+        assert not set(result).intersection(unrelated)
+
+    def test_mixed_line_and_comma_input_preserves_spaces(self, tmp_path):
+        requested = [
+            "services/data/North Region Config_JSON_Consolidate_v1.81.json",
+            "services/data/plain.json",
+            "frontend/src/main.tsx",
+        ]
+        files = []
+        for relative_path in requested:
+            path = tmp_path / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("content")
+            files.append(
+                SourceFile(
+                    abs_path=path,
+                    rel_path=Path(relative_path),
+                    category="config_docs",
+                    line_count=1,
+                    size_bytes=7,
+                    sha256="dummy",
+                    lines=["content"],
+                )
+            )
+
+        raw = f"{requested[0]},\n{requested[1]}; {requested[2]}"
+        result = parse_intelligent_input(raw, files, tmp_path)
+
+        assert result == requested
+
+    def test_unresolved_text_does_not_become_substring_search(self, sample_files):
+        root, files = sample_files
+        result = parse_intelligent_input("read main documentation", files, root)
+        assert result == []
+
 class TestFilterFilesByPaths:
     """Tests for filter_files_by_paths function."""
 
