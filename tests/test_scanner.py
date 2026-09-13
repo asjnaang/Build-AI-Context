@@ -159,6 +159,54 @@ class TestParseIntelligentInput:
 
         assert result == requested
 
+    def test_combined_comma_space_and_line_separators_select_all_paths(self, tmp_path):
+        requested = [
+            "data/Sampled_master_files",
+            "docs/master_data_import_runbook.md",
+            "scripts/master_data_db.sh",
+            "scripts/import_master_data.py",
+            "scripts/create_master_data_postgres.sql",
+            "data/path with spaces/reference data.json",
+        ]
+        files = []
+        for relative_path in requested:
+            path = tmp_path / relative_path
+            if path.suffix:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("content")
+                file_paths = [path]
+            else:
+                path.mkdir(parents=True, exist_ok=True)
+                child = path / "sample.json"
+                child.write_text("content")
+                file_paths = [child]
+            for file_path in file_paths:
+                files.append(SourceFile(
+                    abs_path=file_path,
+                    rel_path=file_path.relative_to(tmp_path),
+                    category="config_docs",
+                    line_count=1,
+                    size_bytes=7,
+                    sha256="dummy",
+                    lines=["content"],
+                ))
+
+        raw = (
+            f"{tmp_path / requested[0]}, {tmp_path / requested[1]}, "
+            f"{tmp_path / requested[2]} {tmp_path / requested[3]} "
+            f"{tmp_path / requested[4]}\n{tmp_path / requested[5]}"
+        )
+        result = parse_intelligent_input(raw, files, tmp_path)
+
+        assert result == [
+            "data/Sampled_master_files/sample.json",
+            "docs/master_data_import_runbook.md",
+            "scripts/master_data_db.sh",
+            "scripts/import_master_data.py",
+            "scripts/create_master_data_postgres.sql",
+            "data/path with spaces/reference data.json",
+        ]
+
     def test_unresolved_text_does_not_become_substring_search(self, sample_files):
         root, files = sample_files
         result = parse_intelligent_input("read main documentation", files, root)
