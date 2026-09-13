@@ -19,17 +19,23 @@ from build_ai_context.chunking import render_chunk_block
 from build_ai_context.constants import (
     CATEGORY_DESCRIPTIONS,
     DEFAULT_TEXT_ENCODING,
+    generate_timestamp,
+    local_now,
 )
 from build_ai_context.models import FileChunk, SourceFile
 
-_PROMPT_MD_PATH = Path(__file__).parent / "prompt.md"
+_BAIC_PROMPT_MD_PATH = Path(__file__).parent / "baic_prompt.md"
+_TASK_PLACEHOLDER = "[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]"
 
 
-def get_prompt_md_content() -> str:
-    """Return the prompt.md content from the bundled file."""
-    if _PROMPT_MD_PATH.exists():
-        return _PROMPT_MD_PATH.read_text(encoding="utf-8")
-    return ""
+def get_baic_prompt_md_content(task: Optional[str] = None) -> str:
+    """Return the bundled prompt, optionally replacing its task placeholder."""
+    if not _BAIC_PROMPT_MD_PATH.exists():
+        return ""
+    content = _BAIC_PROMPT_MD_PATH.read_text(encoding="utf-8")
+    if task is None:
+        return content
+    return content.replace(_TASK_PLACEHOLDER, task, 1)
 
 
 def detect_dependency_files(all_files: Sequence[SourceFile]) -> List[str]:
@@ -130,7 +136,7 @@ def write_project_overview(
     lines.append("=" * 60)
     lines.append(f"PROJECT OVERVIEW: {root.name}")
     lines.append("=" * 60)
-    lines.append(f"Generated: {datetime.now(timezone.utc).isoformat()}")
+    lines.append(f"Generated: {local_now().isoformat()}")
     lines.append(f"Manifest: {manifest_name}")
     lines.append("")
 
@@ -208,6 +214,7 @@ def write_bundles_and_manifest(
     redact: bool = False,
     max_file_lines: Optional[int] = None,
     warnings: Sequence[Dict[str, object]] = (),
+    task: Optional[str] = None,
 ) -> Path:
     """Write bundles and manifest to the output directory."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -248,10 +255,10 @@ def write_bundles_and_manifest(
         if len(parts) >= 3:
             timestamp = parts[-1]
         else:
-            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            timestamp = generate_timestamp()
 
-    # Prepare prompt.md content to prepend to every bundle
-    prompt_content = get_prompt_md_content()
+    # Prepare baic_prompt.md content to prepend to every bundle
+    prompt_content = get_baic_prompt_md_content(task)
 
     # Filetree content for the first bundle
     if filetree_content is None and filetree_name:
@@ -259,9 +266,9 @@ def write_bundles_and_manifest(
         if filetree_path.exists():
             filetree_content = filetree_path.read_text(encoding="utf-8")
 
-    # Write standalone prompt.md file in the output directory
-    prompt_md_path = output_dir / "prompt.md"
-    prompt_md_path.write_text(prompt_content, encoding="utf-8")
+    # Write standalone baic_prompt.md file in the output directory
+    baic_prompt_md_path = output_dir / "baic_prompt.md"
+    baic_prompt_md_path.write_text(prompt_content, encoding="utf-8")
 
     for index, bundle in enumerate(bundles, start=1):
         bundle_name = f"{folder_name}_bundle_{index:03d}_{timestamp}.txt"

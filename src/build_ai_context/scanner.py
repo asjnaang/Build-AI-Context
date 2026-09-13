@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import os
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -32,16 +33,45 @@ from build_ai_context.models import SourceFile
 # ---------------------------------------------------------------------------
 
 
+def _read_gitignore_lines(gitignore_path: Path) -> List[str]:
+    """Read one .gitignore without letting an encoding issue disable filtering."""
+    if not gitignore_path.is_file():
+        return []
+    try:
+        return gitignore_path.read_text(encoding=DEFAULT_TEXT_ENCODING).splitlines()
+    except UnicodeDecodeError:
+        return gitignore_path.read_text(errors="ignore").splitlines()
+
+
+def _rebase_gitignore_lines(lines: Sequence[str], base: Path) -> List[str]:
+    """Rebase patterns from a nested .gitignore to the scan root."""
+    if not base.parts:
+        return list(lines)
+    prefix = base.as_posix().rstrip("/")
+    rebased: List[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            rebased.append(line)
+            continue
+        negated = line.startswith("!")
+        pattern = line[1:] if negated else line
+        escaped_prefix = "!" if negated else ""
+        if pattern.startswith("/"):
+            rebased.append(f"{escaped_prefix}{prefix}/{pattern.lstrip('/')}")
+        elif "/" in pattern.rstrip("/"):
+            rebased.append(f"{escaped_prefix}{prefix}/{pattern}")
+        else:
+            rebased.append(f"{escaped_prefix}{prefix}/{pattern}")
+            rebased.append(f"{escaped_prefix}{prefix}/**/{pattern}")
+    return rebased
+
+
 def load_gitignore_spec(root: Path) -> pathspec.PathSpec:
     """Load .gitignore patterns from the project root."""
-    gitignore_path = root / ".gitignore"
-    patterns: List[str] = []
-    if gitignore_path.exists():
-        try:
-            patterns.extend(gitignore_path.read_text(encoding=DEFAULT_TEXT_ENCODING).splitlines())
-        except UnicodeDecodeError:
-            patterns.extend(gitignore_path.read_text(errors="ignore").splitlines())
-    return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
+    return pathspec.PathSpec.from_lines(
+        "gitwildmatch", _read_gitignore_lines(root / ".gitignore")
+    )
 
 
 def path_matches_any_pattern(rel_path: str, patterns: Iterable[str]) -> bool:
@@ -142,45 +172,69 @@ def sha256_of_lines(lines: Sequence[str]) -> str:
 def scan_supported_files(
     root: Path, skip_secret_files: bool
 ) -> Tuple[List[SourceFile], Dict[str, int]]:
-    """Scan the project root for supported files."""
-    gitignore_spec = load_gitignore_spec(root)
+    """Scan supported files while pruning ignored directories before descent."""
     discovered: List[SourceFile] = []
     skipped_reasons: Dict[str, int] = defaultdict(int)
+    inherited_patterns: Dict[Path, List[str]] = {
+        root: _read_gitignore_lines(root / ".gitignore")
+    }
 
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        rel_path = path.relative_to(root)
-        ignored, reason = is_ignored(rel_path, gitignore_spec, skip_secret_files)
-        if ignored:
-            skipped_reasons[reason] += 1
-            continue
-        category = detect_category(path)
-        if not category:
-            skipped_reasons["unsupported_type"] += 1
-            continue
-        if is_probably_binary(path):
-            skipped_reasons["binary"] += 1
-            continue
-        try:
-            lines = read_text_lines(path)
-        except OSError:
-            skipped_reasons["read_error"] += 1
-            continue
-        discovered.append(
-            SourceFile(
-                abs_path=path.resolve(),
-                rel_path=rel_path,
-                category=category,
-                line_count=len(lines),
-                size_bytes=path.stat().st_size,
-                sha256=sha256_of_lines(lines),
-                lines=lines,
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+        current_dir = Path(dirpath)
+        current_rel = current_dir.relative_to(root)
+        gitignore_lines = list(inherited_patterns.pop(current_dir, []))
+        if current_rel.parts:
+            gitignore_lines.extend(
+                _rebase_gitignore_lines(
+                    _read_gitignore_lines(current_dir / ".gitignore"), current_rel
+                )
             )
-        )
+        gitignore_spec = pathspec.PathSpec.from_lines("gitwildmatch", gitignore_lines)
+
+        kept_dirs: List[str] = []
+        for dirname in dirnames:
+            rel_dir = current_rel / dirname
+            ignored, reason = is_ignored(rel_dir, gitignore_spec, skip_secret_files)
+            if ignored:
+                skipped_reasons[reason] += 1
+            else:
+                kept_dirs.append(dirname)
+                inherited_patterns[current_dir / dirname] = gitignore_lines
+        dirnames[:] = kept_dirs
+
+        for filename in filenames:
+            path = current_dir / filename
+            rel_path = current_rel / filename
+            ignored, reason = is_ignored(rel_path, gitignore_spec, skip_secret_files)
+            if ignored:
+                skipped_reasons[reason] += 1
+                continue
+            category = detect_category(path)
+            if not category:
+                skipped_reasons["unsupported_type"] += 1
+                continue
+            if is_probably_binary(path):
+                skipped_reasons["binary"] += 1
+                continue
+            try:
+                lines = read_text_lines(path)
+                size_bytes = path.stat().st_size
+            except OSError:
+                skipped_reasons["read_error"] += 1
+                continue
+            discovered.append(
+                SourceFile(
+                    abs_path=path.resolve(),
+                    rel_path=rel_path,
+                    category=category,
+                    line_count=len(lines),
+                    size_bytes=size_bytes,
+                    sha256=sha256_of_lines(lines),
+                    lines=lines,
+                )
+            )
     discovered.sort(key=lambda item: item.rel_path.as_posix())
     return discovered, dict(sorted(skipped_reasons.items()))
-
 
 # ---------------------------------------------------------------------------
 # Selection helpers
@@ -228,8 +282,48 @@ def parse_csv_input(raw: str) -> List[str]:
     return [token.strip() for token in raw.split(",") if token.strip()]
 
 
+def _resolve_selection_token(
+    token: str, all_path_strs: set[str], all_names: set[str], root: Path
+) -> List[str]:
+    """Resolve one selection token without broad substring matching."""
+    candidate = token.strip()
+    if not candidate:
+        return []
+    if Path(candidate).is_absolute():
+        try:
+            candidate = Path(candidate).resolve().relative_to(root).as_posix()
+        except ValueError:
+            return []
+    if candidate in all_path_strs:
+        return [candidate]
+    if candidate in all_names:
+        return sorted(
+            path for path in all_path_strs
+            if path == candidate or path.endswith("/" + candidate)
+        )
+    suffix_matches = sorted(
+        path for path in all_path_strs if path.endswith("/" + candidate)
+    )
+    if suffix_matches:
+        return suffix_matches
+    if candidate.startswith(".") and "/" not in candidate:
+        extension_matches = sorted(
+            path for path in all_path_strs if Path(path).suffix == candidate
+        )
+        if extension_matches:
+            return extension_matches
+    if "/" not in candidate and " " not in candidate:
+        stem_matches = sorted(
+            path for path in all_path_strs if Path(path).stem == candidate
+        )
+        if stem_matches:
+            return stem_matches
+    directory_prefix = candidate.rstrip("/") + "/"
+    return sorted(path for path in all_path_strs if path.startswith(directory_prefix))
+
+
 def parse_intelligent_input(raw: str, files: Sequence[SourceFile], root: Path) -> List[str]:
-    """Intelligently parse input that might have mixed commas, spaces, or no separators."""
+    """Parse line-, comma-, semicolon-, or legacy space-separated path input."""
     if not raw.strip():
         return []
 
@@ -237,88 +331,53 @@ def parse_intelligent_input(raw: str, files: Sequence[SourceFile], root: Path) -
     all_names = {f.rel_path.name for f in files}
     found_paths: List[str] = []
 
-    parts = [p.strip() for p in re.split(r"[,;\s]+", raw) if p.strip()]
+    def add_matches(token: str) -> bool:
+        matches = _resolve_selection_token(token, all_path_strs, all_names, root)
+        for match in matches:
+            if match not in found_paths:
+                found_paths.append(match)
+        return bool(matches)
 
-    for part in parts:
-        if Path(part).is_absolute():
-            try:
-                rel = Path(part).resolve().relative_to(root)
-                part = rel.as_posix()
-            except ValueError:
-                pass
+    def add_segment(segment: str) -> None:
+        candidate = segment.strip()
+        if not candidate or add_matches(candidate):
+            return
 
-        if part in all_path_strs:
-            if part not in found_paths:
-                found_paths.append(part)
-            continue
+        # A quoted --paths value can contain several space-separated paths,
+        # while an individual path may itself contain spaces. Find a complete
+        # partition and prefer the longest resolvable path at each position.
+        words = candidate.split()
+        memo: Dict[int, Optional[List[List[str]]]] = {}
 
-        if part in all_names:
-            for p in all_path_strs:
-                if p.endswith("/" + part) or p == part:
-                    if p not in found_paths:
-                        found_paths.append(p)
-            continue
+        def partition(start: int) -> Optional[List[List[str]]]:
+            if start == len(words):
+                return []
+            if start in memo:
+                return memo[start]
+            for end in range(len(words), start, -1):
+                matches = _resolve_selection_token(
+                    " ".join(words[start:end]), all_path_strs, all_names, root
+                )
+                if not matches:
+                    continue
+                remainder = partition(end)
+                if remainder is not None:
+                    memo[start] = [matches] + remainder
+                    return memo[start]
+            memo[start] = None
+            return None
 
-        exact_matches = [p for p in all_path_strs if p == part or p.endswith("/" + part)]
-        if exact_matches:
-            for m in exact_matches:
-                if m not in found_paths:
-                    found_paths.append(m)
-            continue
+        resolved_groups = partition(0)
+        if resolved_groups is None:
+            return
+        for matches in resolved_groups:
+            for match in matches:
+                if match not in found_paths:
+                    found_paths.append(match)
 
-        folder_matches = [
-            p for p in all_path_strs if p.startswith(part + "/") or "/" + part + "/" in p
-        ]
-        if folder_matches:
-            for m in folder_matches:
-                if m not in found_paths:
-                    found_paths.append(m)
-            continue
-
-        contains_matches = [p for p in all_path_strs if part in p]
-        if contains_matches:
-            for m in contains_matches:
-                if m not in found_paths:
-                    found_paths.append(m)
-            continue
-
-        partial = [
-            p
-            for p in all_path_strs
-            if p.replace("/", "")
-            .replace("\\", "")
-            .startswith(part.replace("/", "").replace("\\", ""))
-        ]
-        if partial:
-            for m in partial:
-                if m not in found_paths:
-                    found_paths.append(m)
-            continue
-
-        for ext in [
-            ".dart",
-            ".py",
-            ".js",
-            ".ts",
-            ".kt",
-            ".java",
-            ".swift",
-            ".md",
-            ".json",
-            ".yaml",
-            ".xml",
-            ".txt",
-            ".properties",
-        ]:
-            if ext in part:
-                matching_files = [
-                    p for p in all_path_strs if p.endswith(part) or p.endswith("/" + part)
-                ]
-                for m in matching_files:
-                    if m not in found_paths:
-                        found_paths.append(m)
-                if matching_files:
-                    break
+    for raw_line in raw.splitlines():
+        for segment in re.split(r"[,;]+", raw_line):
+            add_segment(segment)
 
     return found_paths
 
