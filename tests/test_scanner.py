@@ -97,6 +97,121 @@ class TestParseIntelligentInput:
         assert "docs/guide.md/index.md" in result
 
 
+    def test_paths_with_spaces_do_not_select_unrelated_files(self, tmp_path):
+        requested = [
+            "services/data/North Region Config_JSON_Consolidate_v1.81.json",
+            "services/data/west desk config_consolidated json_v1.8.json",
+            "services/data/east desk config_consolidated json_v18.json",
+        ]
+        unrelated = [
+            "frontend/Settings/SettingsPanel.tsx",
+            "frontend/InputForms/InputAccordion.tsx",
+            "services/compare_search_algorithms.py",
+        ]
+        files = []
+        for relative_path in requested + unrelated:
+            path = tmp_path / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("content")
+            files.append(
+                SourceFile(
+                    abs_path=path,
+                    rel_path=Path(relative_path),
+                    category="config_docs",
+                    line_count=1,
+                    size_bytes=7,
+                    sha256="dummy",
+                    lines=["content"],
+                )
+            )
+
+        raw = "\n".join(requested)
+        result = parse_intelligent_input(raw, files, tmp_path)
+
+        assert result == requested
+        assert not set(result).intersection(unrelated)
+
+    def test_mixed_line_and_comma_input_preserves_spaces(self, tmp_path):
+        requested = [
+            "services/data/North Region Config_JSON_Consolidate_v1.81.json",
+            "services/data/plain.json",
+            "frontend/src/main.tsx",
+        ]
+        files = []
+        for relative_path in requested:
+            path = tmp_path / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("content")
+            files.append(
+                SourceFile(
+                    abs_path=path,
+                    rel_path=Path(relative_path),
+                    category="config_docs",
+                    line_count=1,
+                    size_bytes=7,
+                    sha256="dummy",
+                    lines=["content"],
+                )
+            )
+
+        raw = f"{requested[0]},\n{requested[1]}; {requested[2]}"
+        result = parse_intelligent_input(raw, files, tmp_path)
+
+        assert result == requested
+
+    def test_combined_comma_space_and_line_separators_select_all_paths(self, tmp_path):
+        requested = [
+            "data/Sampled_master_files",
+            "docs/master_data_import_runbook.md",
+            "scripts/master_data_db.sh",
+            "scripts/import_master_data.py",
+            "scripts/create_master_data_postgres.sql",
+            "data/path with spaces/reference data.json",
+        ]
+        files = []
+        for relative_path in requested:
+            path = tmp_path / relative_path
+            if path.suffix:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("content")
+                file_paths = [path]
+            else:
+                path.mkdir(parents=True, exist_ok=True)
+                child = path / "sample.json"
+                child.write_text("content")
+                file_paths = [child]
+            for file_path in file_paths:
+                files.append(SourceFile(
+                    abs_path=file_path,
+                    rel_path=file_path.relative_to(tmp_path),
+                    category="config_docs",
+                    line_count=1,
+                    size_bytes=7,
+                    sha256="dummy",
+                    lines=["content"],
+                ))
+
+        raw = (
+            f"{tmp_path / requested[0]}, {tmp_path / requested[1]}, "
+            f"{tmp_path / requested[2]} {tmp_path / requested[3]} "
+            f"{tmp_path / requested[4]}\n{tmp_path / requested[5]}"
+        )
+        result = parse_intelligent_input(raw, files, tmp_path)
+
+        assert result == [
+            "data/Sampled_master_files/sample.json",
+            "docs/master_data_import_runbook.md",
+            "scripts/master_data_db.sh",
+            "scripts/import_master_data.py",
+            "scripts/create_master_data_postgres.sql",
+            "data/path with spaces/reference data.json",
+        ]
+
+    def test_unresolved_text_does_not_become_substring_search(self, sample_files):
+        root, files = sample_files
+        result = parse_intelligent_input("read main documentation", files, root)
+        assert result == []
+
 class TestFilterFilesByPaths:
     """Tests for filter_files_by_paths function."""
 
@@ -305,6 +420,44 @@ class TestCategorySelection:
         expected = sorted(summary.keys())[:2]
         assert result == expected
 
+
+class TestGitignoreAwareTraversal:
+    """Regression coverage for pruning and nested repository ignore rules."""
+
+    def test_root_gitignore_prunes_ignored_repository_before_descent(self, tmp_path, monkeypatch):
+        included = tmp_path / "frontend"
+        ignored = tmp_path / "unused-repo"
+        included.mkdir()
+        ignored.mkdir()
+        (included / "app.ts").write_text("export const app = true")
+        (ignored / "never-read.py").write_text("raise AssertionError")
+        (tmp_path / ".gitignore").write_text("unused-repo/\n")
+
+        original_read = Path.read_text
+
+        def guarded_read(path, *args, **kwargs):
+            if path.name == "never-read.py":
+                raise AssertionError("ignored repository was traversed")
+            return original_read(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", guarded_read)
+        files, skipped = scan_supported_files(tmp_path, skip_secret_files=True)
+
+        assert [item.rel_path.as_posix() for item in files] == ["frontend/app.ts"]
+        assert skipped[".gitignore"] == 1
+
+    def test_nested_gitignore_is_applied_within_each_repository(self, tmp_path):
+        repo = tmp_path / "backend"
+        generated = repo / "generated"
+        generated.mkdir(parents=True)
+        (repo / ".gitignore").write_text("generated/\n")
+        (repo / "main.py").write_text("print('included')")
+        (generated / "large.py").write_text("print('ignored')")
+
+        files, skipped = scan_supported_files(tmp_path, skip_secret_files=True)
+
+        assert [item.rel_path.as_posix() for item in files] == ["backend/main.py"]
+        assert skipped[".gitignore"] == 1
 
 if __name__ == "__main__":
     pytest.main([__file__])

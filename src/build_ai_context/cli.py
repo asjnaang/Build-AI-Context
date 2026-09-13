@@ -5,6 +5,7 @@ Command-line interface for build_ai_context package.
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,6 +58,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--force-bundle",
+        action="store_true",
+        help=(
+            "For oversized JSON data files, bundle an in-memory representative "
+            "sample instead of skipping the file. Source files are never modified."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         default=None,
         help="Optional output directory. Defaults to a timestamped folder under the current directory.",
@@ -89,6 +98,18 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="*",
         default=[],
         help="Keywords to search in file content (non-interactive mode).",
+    )
+    task_group = parser.add_mutually_exclusive_group()
+    task_group.add_argument(
+        "--task",
+        default=None,
+        help="Replace the Task Contract placeholder in the generated baic_prompt.md.",
+    )
+    task_group.add_argument(
+        "--task-clipboard",
+        "--tc",
+        action="store_true",
+        help="Read the Task Contract from the macOS clipboard using pbpaste.",
     )
     parser.add_argument(
         "--include-secret-files",
@@ -141,6 +162,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     return parser
 
+
+
+def resolve_task_content(args) -> str | None:
+    """Return task text from --task or the macOS clipboard."""
+    if not getattr(args, "task_clipboard", False):
+        return getattr(args, "task", None)
+    try:
+        completed = subprocess.run(
+            ["pbpaste"], check=True, capture_output=True, text=True
+        )
+    except FileNotFoundError as exc:
+        raise ValueError("--task-clipboard/--tc requires the macOS pbpaste command") from exc
+    except subprocess.CalledProcessError as exc:
+        raise ValueError("Unable to read task content from the macOS clipboard") from exc
+    if not completed.stdout:
+        raise ValueError("The macOS clipboard does not contain task text")
+    return completed.stdout
 
 def main() -> int:
     """Main entry point for the CLI."""
@@ -236,6 +274,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         exporter = CodeExporter(redact=getattr(args, "redact", False))
 
     try:
+        task = resolve_task_content(args)
         root = Path(args.project_root).expanduser().resolve()
         if not root.exists():
             print(f"Error: Project root does not exist: {root}", file=sys.stderr)
@@ -291,8 +330,11 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
                     return 0, all_files, skipped_reasons
             else:
                 path_inputs = args.paths
-                if args.paths and len(args.paths) == 1:
-                    path_inputs = exporter.parse_intelligent_input(args.paths[0], all_files, root)
+                if args.paths:
+                    raw_path_input = "\n".join(args.paths)
+                    path_inputs = exporter.parse_intelligent_input(
+                        raw_path_input, all_files, root
+                    )
                     if not path_inputs:
                         path_inputs = args.paths
                 selected_files, selection_metadata = exporter.non_interactive_select_files(
@@ -314,12 +356,18 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             f"Selected {len(selected_files)} file(s) out of {len(all_files)} supported file(s)."
         )
 
+        force_bundle_events: List[dict] = []
+        if args.force_bundle:
+            selected_files, force_bundle_events = exporter.force_bundle_json_files(
+                selected_files, args.max_file_lines
+            )
         chunks, split_items = exporter.split_into_chunks(
             selected_files,
             bundle_max_lines,
             max_file_lines=args.max_file_lines,
         )
         warnings = [item for item in split_items if item.get("reason") == "large_file_warning"]
+        warnings.extend(force_bundle_events)
         skipped_during_split = [
             item for item in split_items if item.get("reason") != "large_file_warning"
         ]
@@ -374,6 +422,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             filetree_name=filetree_name,
             filetree_content=filetree_content,
             timestamp=timestamp,
+            task=task,
         )
 
         overview_path = None
@@ -406,9 +455,9 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
 
         if not args.non_interactive and not args.non_interactive:
             print(
-                f"\n📝 Open 'prompt.md' in the output directory and replace the task description "
+                f"\n📝 Open 'baic_prompt.md' in the output directory and replace the task description "
                 f"(under ## Task Contract) with your specific feature request or question or changes needed.\n"
-                f"Then upload all bundle files along with prompt.md and ask your AI assistant address the promt.md "
+                f"Then upload all bundle files along with baic_prompt.md and ask your AI assistant address the promt.md "
                 f"for best results.\n\n"
             )
 
