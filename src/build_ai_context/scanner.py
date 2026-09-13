@@ -306,6 +306,18 @@ def _resolve_selection_token(
     )
     if suffix_matches:
         return suffix_matches
+    if candidate.startswith(".") and "/" not in candidate:
+        extension_matches = sorted(
+            path for path in all_path_strs if Path(path).suffix == candidate
+        )
+        if extension_matches:
+            return extension_matches
+    if "/" not in candidate and " " not in candidate:
+        stem_matches = sorted(
+            path for path in all_path_strs if Path(path).stem == candidate
+        )
+        if stem_matches:
+            return stem_matches
     directory_prefix = candidate.rstrip("/") + "/"
     return sorted(path for path in all_path_strs if path.startswith(directory_prefix))
 
@@ -326,34 +338,46 @@ def parse_intelligent_input(raw: str, files: Sequence[SourceFile], root: Path) -
                 found_paths.append(match)
         return bool(matches)
 
+    def add_segment(segment: str) -> None:
+        candidate = segment.strip()
+        if not candidate or add_matches(candidate):
+            return
+
+        # A quoted --paths value can contain several space-separated paths,
+        # while an individual path may itself contain spaces. Find a complete
+        # partition and prefer the longest resolvable path at each position.
+        words = candidate.split()
+        memo: Dict[int, Optional[List[List[str]]]] = {}
+
+        def partition(start: int) -> Optional[List[List[str]]]:
+            if start == len(words):
+                return []
+            if start in memo:
+                return memo[start]
+            for end in range(len(words), start, -1):
+                matches = _resolve_selection_token(
+                    " ".join(words[start:end]), all_path_strs, all_names, root
+                )
+                if not matches:
+                    continue
+                remainder = partition(end)
+                if remainder is not None:
+                    memo[start] = [matches] + remainder
+                    return memo[start]
+            memo[start] = None
+            return None
+
+        resolved_groups = partition(0)
+        if resolved_groups is None:
+            return
+        for matches in resolved_groups:
+            for match in matches:
+                if match not in found_paths:
+                    found_paths.append(match)
+
     for raw_line in raw.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if add_matches(line.rstrip(",;").strip()):
-            continue
-
-        separator_parts = [
-            part.strip() for part in re.split(r"[,;]+", line) if part.strip()
-        ]
-        if len(separator_parts) > 1:
-            for part in separator_parts:
-                add_matches(part)
-            continue
-
-        # Backward compatibility for inputs such as "main.py utils.py". Only
-        # accept whitespace splitting when every token independently resolves.
-        whitespace_parts = line.split()
-        if len(whitespace_parts) > 1:
-            resolved = [
-                _resolve_selection_token(part, all_path_strs, all_names, root)
-                for part in whitespace_parts
-            ]
-            if all(resolved):
-                for matches in resolved:
-                    for match in matches:
-                        if match not in found_paths:
-                            found_paths.append(match)
+        for segment in re.split(r"[,;]+", raw_line):
+            add_segment(segment)
 
     return found_paths
 
