@@ -8,7 +8,11 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Sequence
 
-from build_ai_context.constants import DEFAULT_OUTPUT_DIR, generate_timestamp
+from build_ai_context.constants import (
+    DEFAULT_OUTPUT_DIR,
+    GENERATED_FILES_DIR,
+    generate_timestamp,
+)
 from build_ai_context.models import SourceFile
 
 
@@ -40,49 +44,43 @@ def generate_filetree(files: Sequence[SourceFile], root: Path) -> str:
     return "\n".join(lines)
 
 
-def update_gitignore(root: Path, filetree_name: str) -> None:
-    """Update .gitignore to ignore exported_sources, filetree, and graph files."""
+def generated_files_dir(root: Path) -> Path:
+    """Create and return the repository-local generated-files directory."""
+    output = root / GENERATED_FILES_DIR
+    output.mkdir(parents=True, exist_ok=True)
+    return output
+
+
+def update_gitignore(root: Path, _generated_name: str = "") -> None:
+    """Consolidate legacy generated-output ignores into one .gen_files rule."""
     gitignore_path = root / ".gitignore"
+    if not gitignore_path.is_file():
+        return
 
-    existing_lines: List[str] = []
-    if gitignore_path.exists():
-        existing_lines = gitignore_path.read_text(encoding="utf-8").splitlines()
-
-    new_lines: List[str] = []
-
-    has_exported_sources = any(
-        "exported_sources" in line and not line.strip().startswith("#") for line in existing_lines
-    )
-    has_filetree = any(
-        "_file_tree_" in line and not line.strip().startswith("#") for line in existing_lines
-    )
-    has_graph_txt = any(
-        "*_code_graph_*.txt" in line and not line.strip().startswith("#")
-        for line in existing_lines
-    )
-    has_graph_json = any(
-        "*_code_graph_*.json" in line and not line.strip().startswith("#")
-        for line in existing_lines
-    )
-
-    if existing_lines and existing_lines[-1].strip():
-        new_lines.append("")
-
-    if not has_exported_sources:
-        new_lines.append("# Ignore exported source bundles")
-        new_lines.append("exported_sources*/")
-
-    if not has_filetree:
-        new_lines.append("# Ignore filetree files (all timestamps)")
-        new_lines.append("*_file_tree_*.txt")
-
-    if not has_graph_txt:
-        new_lines.append("# Ignore code graph files (all timestamps)")
-        new_lines.append("*_code_graph_*.txt")
-    if not has_graph_json:
-        new_lines.append("# Ignore JSON code graph files (all timestamps)")
-        new_lines.append("*_code_graph_*.json")
-
-    if new_lines:
-        updated = existing_lines + new_lines
-        gitignore_path.write_text("\n".join(updated) + "\n", encoding="utf-8")
+    legacy_patterns = {
+        "exported_sources**",
+        "exported_sources*",
+        "exported_sources*/",
+        "*_file_tree_*.txt",
+        "*_code_graph_*.txt",
+        "*_code_graph_*.json",
+        ".gapply-logs",
+        ".gapply-logs*",
+        "git_commit_exports",
+        "git_commit_exports/",
+    }
+    original = gitignore_path.read_text(encoding="utf-8")
+    lines = [line for line in original.splitlines() if line.strip() not in legacy_patterns]
+    generated_pattern = f"{GENERATED_FILES_DIR}/**"
+    if generated_pattern not in {line.strip() for line in lines}:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.extend(
+            [
+                "# Generated files created by build",
+                generated_pattern,
+            ]
+        )
+    updated = "\n".join(lines) + "\n"
+    if updated != original:
+        gitignore_path.write_text(updated, encoding="utf-8", newline="\n")

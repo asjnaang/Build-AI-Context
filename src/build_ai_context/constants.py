@@ -8,6 +8,7 @@ from typing import Dict, Set
 # Default configuration values
 # Fixed max rendered lines per output *bundle* file. Not a CLI override.
 DEFAULT_MAX_LINES: int = 8000
+GENERATED_FILES_DIR: str = ".gen_files"
 DEFAULT_OUTPUT_DIR: str = "exported_sources"
 DEFAULT_TEXT_ENCODING: str = "utf-8"
 
@@ -69,6 +70,7 @@ SPECIAL_FILENAMES: Set[str] = {
 # Directories to always skip
 DEFAULT_EXCLUDED_DIRS: Set[str] = {
     ".git",
+    GENERATED_FILES_DIR,
     ".svn",
     ".hg",
     ".idea",
@@ -110,7 +112,7 @@ DEFAULT_EXCLUDED_DIRS: Set[str] = {
 
 # Directory prefixes to always skip (paths starting with these)
 DEFAULT_EXCLUDED_PREFIXES: Set[str] = {
-    "exported_sources",
+    "exported_sources",  # Legacy output location, retained for compatibility.
 }
 
 # Extra file patterns to skip (not in .gitignore but not needed for context)

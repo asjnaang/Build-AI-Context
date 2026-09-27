@@ -294,63 +294,32 @@ class TestTimestampConsistency:
 
 
 class TestGitignoreUpdates:
-    """Tests for .gitignore updates."""
+    """Tests for consolidated .gitignore updates."""
 
-    def test_update_gitignore_adds_entries(self, tmp_path):
-        """Test that update_gitignore adds entries to .gitignore."""
+    def test_update_gitignore_migrates_legacy_entries(self, tmp_path):
         from build_ai_context.filetree import update_gitignore
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text("*.pyc\nexported_sources*/\n*_file_tree_*.txt\n*_code_graph_*.txt\n*_code_graph_*.json\n")
+        update_gitignore(tmp_path, "unused")
+        lines = gitignore.read_text().splitlines()
+        assert "*.pyc" in lines
+        assert ".gen_files/**" in lines
+        assert "exported_sources*/" not in lines
+        assert "*_file_tree_*.txt" not in lines
+        assert "*_code_graph_*.txt" not in lines
+        assert "*_code_graph_*.json" not in lines
 
+    def test_update_gitignore_is_idempotent(self, tmp_path):
+        from build_ai_context.filetree import update_gitignore
         gitignore = tmp_path / ".gitignore"
         gitignore.write_text("*.pyc\n")
+        update_gitignore(tmp_path)
+        first = gitignore.read_bytes()
+        update_gitignore(tmp_path)
+        assert gitignore.read_bytes() == first
+        assert first.decode().splitlines().count(".gen_files/**") == 1
 
-        update_gitignore(tmp_path, "test_file_tree_20260328T120000Z.txt")
-
-        content = gitignore.read_text()
-        assert "exported_sources*/" in content
-        assert "*_file_tree_*.txt" in content
-        # Should not duplicate
-        lines = content.splitlines()
-        assert lines.count("exported_sources*/") == 1
-        assert lines.count("*_file_tree_*.txt") == 1
-
-    def test_update_gitignore_no_duplicate(self, tmp_path):
-        """Test that update_gitignore does not duplicate entries."""
+    def test_update_gitignore_does_not_create_file(self, tmp_path):
         from build_ai_context.filetree import update_gitignore
-
-        gitignore = tmp_path / ".gitignore"
-        gitignore.write_text("exported_sources*/\n*_file_tree_*.txt\n")
-
-        update_gitignore(tmp_path, "test_file_tree_20260328T120000Z.txt")
-
-        content = gitignore.read_text()
-        lines = content.splitlines()
-        assert lines.count("exported_sources*/") == 1
-        assert lines.count("*_file_tree_*.txt") == 1
-
-    def test_update_gitignore_creates_file(self, tmp_path):
-        """Test that update_gitignore creates .gitignore if missing."""
-        from build_ai_context.filetree import update_gitignore
-
-        gitignore = tmp_path / ".gitignore"
-        assert not gitignore.exists()
-
-        update_gitignore(tmp_path, "test_file_tree_20260328T120000Z.txt")
-
-        assert gitignore.exists()
-        content = gitignore.read_text()
-        assert "exported_sources*/" in content
-        assert "*_file_tree_*.txt" in content
-
-    def test_update_gitignore_preserves_existing(self, tmp_path):
-        """Test that update_gitignore preserves existing content."""
-        from build_ai_context.filetree import update_gitignore
-
-        gitignore = tmp_path / ".gitignore"
-        gitignore.write_text("*.pyc\n# my comment\n")
-
-        update_gitignore(tmp_path, "test_file_tree_20260328T120000Z.txt")
-
-        content = gitignore.read_text()
-        assert "*.pyc" in content
-        assert "# my comment" in content
-        assert "exported_sources*/" in content
+        update_gitignore(tmp_path)
+        assert not (tmp_path / ".gitignore").exists()

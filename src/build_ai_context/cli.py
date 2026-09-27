@@ -242,7 +242,8 @@ def run_quick_artifacts(args) -> int:
         if getattr(args, "tree", False):
             filetree_content = exporter.generate_filetree(all_files, root)
             filetree_name = f"{folder_name}_file_tree_{timestamp}.txt"
-            filetree_path = root / filetree_name
+            output_root = exporter.generated_files_dir(root)
+            filetree_path = output_root / filetree_name
             filetree_path.write_text(filetree_content, encoding="utf-8")
             exporter.update_gitignore(root, filetree_name)
             exporter.print_success(f"\nFiletree created: {filetree_path}")
@@ -255,7 +256,8 @@ def run_quick_artifacts(args) -> int:
             )
             ext = "json" if output_format == "json" else "txt"
             graph_name = f"{folder_name}_code_graph_{timestamp}.{ext}"
-            graph_path = root / graph_name
+            output_root = exporter.generated_files_dir(root)
+            graph_path = output_root / graph_name
             graph_path.write_text(graph_content, encoding="utf-8")
             exporter.update_gitignore(root, graph_name)
             exporter.print_success(f"Code graph created: {graph_path}")
@@ -393,7 +395,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         output_dir = (
             Path(args.output_dir).expanduser().resolve()
             if args.output_dir
-            else Path.cwd() / exporter.sanitize_output_dir_name(root)
+            else exporter.generated_files_dir(root) / exporter.sanitize_output_dir_name(root)
         )
 
         # Extract timestamp from output_dir name for consistency

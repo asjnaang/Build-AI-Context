@@ -158,6 +158,7 @@ class CodeExporter:
     # Delegated methods from filetree module
     # -------------------------------------------------------------------------
     sanitize_output_dir_name = staticmethod(filetree.sanitize_output_dir_name)
+    generated_files_dir = staticmethod(filetree.generated_files_dir)
 
     def generate_filetree(self, files: Sequence[SourceFile], root: Path) -> str:
         """Generate a path-list filetree for AI assistants."""
@@ -331,7 +332,7 @@ class CodeExporter:
         out_dir = (
             Path(output_dir).expanduser().resolve()
             if output_dir
-            else Path.cwd() / self.sanitize_output_dir_name(root)
+            else self.generated_files_dir(root) / self.sanitize_output_dir_name(root)
         )
 
         # Extract timestamp from output_dir name for consistency

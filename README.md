@@ -135,6 +135,10 @@ Shortcuts you can use: `py`→`python`, `ts`→`typescript`, `js`→`javascript`
 
 ## Output Files
 
+By default, generated artifacts are written below `<project>/.gen_files/`. Full exports use a timestamped `exported_sources_<project>_<timestamp>/` child folder, while `--tree` and `--graph` write their files directly under `.gen_files/`. An explicit `--output-dir` remains unchanged.
+
+When the project already has a `.gitignore`, the tool removes exact legacy generated-output patterns and adds the single rule `.gen_files/**`. It does not create a new `.gitignore` solely for this purpose.
+
 After running, you'll get:
 
 | File | Description |
@@ -286,7 +290,7 @@ Redaction targets: API keys, tokens, passwords, JWTs, AWS keys, GitHub tokens, e
 ### Automatically Skipped (No config needed)
 
 - **Directories**: `.git`, `node_modules`, `__pycache__`, `.gradle`, `build`, `dist`, `target`, `.github`
-- **Exported bundles**: `exported_sources*` folders (prevents re-bundling previous exports)
+- **Generated outputs**: `.gen_files` folders, plus legacy `exported_sources*` folders for backward compatibility
 - **Lock files**: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`
 - **System files**: `.DS_Store`, `thumbs.db`, `*.swp`
 

@@ -421,6 +421,17 @@ class TestCategorySelection:
         assert result == expected
 
 
+class TestGeneratedFilesTraversal:
+    def test_generated_files_directory_is_pruned_without_gitignore(self, tmp_path):
+        generated = tmp_path / ".gen_files"
+        generated.mkdir()
+        (generated / "bundle.txt").write_text("generated")
+        (tmp_path / "app.py").write_text("print('included')")
+        files, skipped = scan_supported_files(tmp_path, skip_secret_files=True)
+        assert [item.rel_path.as_posix() for item in files] == ["app.py"]
+        assert skipped["default_excluded_dir"] == 1
+
+
 class TestGitignoreAwareTraversal:
     """Regression coverage for pruning and nested repository ignore rules."""
 
