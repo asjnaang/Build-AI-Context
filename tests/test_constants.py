@@ -6,10 +6,17 @@ from datetime import datetime, timedelta
 import build_ai_context.constants as constants
 from build_ai_context.constants import (
     extract_timestamp_from_dir_name,
+    GENERATED_FILES_DIR,
     generate_timestamp,
     is_timestamp,
     local_now,
 )
+
+
+class TestGeneratedFilesConstants:
+    def test_generated_files_directory_name(self):
+        assert GENERATED_FILES_DIR == ".gen_files"
+        assert GENERATED_FILES_DIR in constants.DEFAULT_EXCLUDED_DIRS
 
 
 class TestTimestampFunctions:

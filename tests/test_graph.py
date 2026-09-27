@@ -201,11 +201,11 @@ class TestGraphCli:
         rc = run_quick_artifacts(args)
 
         assert rc == 0
-        graphs = list(tmp_path.glob("*_code_graph_*.txt"))
+        graphs = list((tmp_path / ".gen_files").glob("*_code_graph_*.txt"))
         assert len(graphs) == 1
         content = graphs[0].read_text()
         assert "fn: hello @" in content
-        assert list(tmp_path.glob("*_file_tree_*.txt")) == []
+        assert list((tmp_path / ".gen_files").glob("*_file_tree_*.txt")) == []
 
     def test_tree_and_graph_write_both(self, tmp_path):
         (tmp_path / "app.py").write_text("def hello():\n    return 1\n")
@@ -215,18 +215,20 @@ class TestGraphCli:
         rc = run_quick_artifacts(args)
 
         assert rc == 0
-        assert list(tmp_path.glob("*_code_graph_*.txt"))
-        assert list(tmp_path.glob("*_file_tree_*.txt"))
+        assert list((tmp_path / ".gen_files").glob("*_code_graph_*.txt"))
+        assert list((tmp_path / ".gen_files").glob("*_file_tree_*.txt"))
 
-    def test_gitignore_gets_graph_pattern(self, tmp_path):
+    def test_gitignore_gets_single_generated_files_pattern(self, tmp_path):
         (tmp_path / "app.py").write_text("def hello():\n    return 1\n")
+        (tmp_path / ".gitignore").write_text("*_code_graph_*.txt\n")
         from build_ai_context.cli import build_parser, run_quick_artifacts
 
         args = build_parser().parse_args(["--graph", str(tmp_path)])
         assert run_quick_artifacts(args) == 0
 
-        gitignore = (tmp_path / ".gitignore").read_text()
-        assert "*_code_graph_*.txt" in gitignore
+        lines = (tmp_path / ".gitignore").read_text().splitlines()
+        assert ".gen_files/**" in lines
+        assert "*_code_graph_*.txt" not in lines
 
 
 class TestGraphJson:
@@ -303,11 +305,11 @@ class TestGraphCliFormat:
         args = build_parser().parse_args(["--graph", "--format", "json", str(tmp_path)])
         assert run_quick_artifacts(args) == 0
 
-        graphs = list(tmp_path.glob("*_code_graph_*.json"))
+        graphs = list((tmp_path / ".gen_files").glob("*_code_graph_*.json"))
         assert len(graphs) == 1
         data = json.loads(graphs[0].read_text())
         assert data["catalog"]
-        assert list(tmp_path.glob("*_code_graph_*.txt")) == []
+        assert list((tmp_path / ".gen_files").glob("*_code_graph_*.txt")) == []
 
     def test_format_default_stays_txt(self, tmp_path):
         (tmp_path / "app.py").write_text("def hello():\n    return 1\n")
@@ -315,14 +317,13 @@ class TestGraphCliFormat:
 
         args = build_parser().parse_args(["--graph", str(tmp_path)])
         assert run_quick_artifacts(args) == 0
-        assert list(tmp_path.glob("*_code_graph_*.txt"))
-        assert list(tmp_path.glob("*_code_graph_*.json")) == []
+        assert list((tmp_path / ".gen_files").glob("*_code_graph_*.txt"))
+        assert list((tmp_path / ".gen_files").glob("*_code_graph_*.json")) == []
 
-    def test_gitignore_covers_json_graphs(self, tmp_path):
+    def test_graph_does_not_create_gitignore(self, tmp_path):
         (tmp_path / "app.py").write_text("def hello():\n    return 1\n")
         from build_ai_context.cli import build_parser, run_quick_artifacts
 
         args = build_parser().parse_args(["--graph", "--format", "json", str(tmp_path)])
         assert run_quick_artifacts(args) == 0
-        gitignore = (tmp_path / ".gitignore").read_text()
-        assert "*_code_graph_*.json" in gitignore
+        assert not (tmp_path / ".gitignore").exists()
