@@ -59,10 +59,9 @@ claude.md
 uv.lock
 
 # Ignore filetree files (all timestamps)
-*_file_tree_*.txt
 .gapply*
 
 # Ignore code graph files (all timestamps)
-*_code_graph_*.txt
-*_code_graph_*.json
 
+# Generated files created by repository utility scripts
+.gen_files/**
