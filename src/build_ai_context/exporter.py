@@ -255,6 +255,7 @@ class CodeExporter:
         include_filetree: bool = True,
         task: Optional[str] = None,
         force_bundle: bool = False,
+        force_ignored: bool = False,
     ) -> ExportResult:
         """Run the full export process."""
         root = Path(project_root or Path.cwd()).expanduser().resolve()
@@ -266,7 +267,15 @@ class CodeExporter:
         self.print_info(f"Scanning project: {root}")
 
         skip_secret_files = not include_secret_files
-        all_files, skipped_reasons = self.scan_supported_files(root, skip_secret_files)
+        all_files, skipped_reasons = self.scan_supported_files(
+            root,
+            skip_secret_files,
+            force_ignored_paths=(
+                scanner.expand_explicit_path_inputs(paths or [], root)
+                if force_ignored
+                else []
+            ),
+        )
 
         if not all_files:
             self.print_warning("No supported files found.")
@@ -318,8 +327,9 @@ class CodeExporter:
             selected_files, force_bundle_events = self.force_bundle_json_files(
                 selected_files, max_file_lines
             )
+        effective_max_file_lines = 0 if force_bundle else max_file_lines
         chunks, split_items = self.split_into_chunks(
-            selected_files, max_lines, max_file_lines=max_file_lines
+            selected_files, max_lines, max_file_lines=effective_max_file_lines
         )
         warnings = [item for item in split_items if item.get("reason") == "large_file_warning"]
         skipped_during_split = [

@@ -108,7 +108,8 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `--non-interactive` | Run without prompts | `--non-interactive` |
 | `--all` | Export everything supported without prompts | `baic . --all` |
 | `--max-file-lines` | Skip repo source files with ≥ N lines when bundling (default: 3000; `0` = no limit). Bundle output size stays fixed at 8000 lines. | `--max-file-lines 10000` |
-| `--force-bundle` | Sample oversized JSON data in memory without modifying source files | `--max-file-lines 1000 --force-bundle` |
+| `--force-ignored` | Include supported files under explicit `--paths` even when ignored; secret-like files still require `--include-secret-files` | `--paths .gen_files/reports --force-ignored` |
+| `--force-bundle` | Bundle selected files regardless of the per-file line limit; oversized JSON is sampled when possible | `--paths reports --force-bundle` |
 | `--output-dir` | Custom output folder | `--output-dir ./my-bundles` |
 | `--project-overview` | Generate architecture overview | `--project-overview` |
 | `--include-secret-files` | Include .env, keys, etc. (careful!) | `--include-secret-files` |
@@ -299,13 +300,17 @@ Redaction targets: API keys, tokens, passwords, JWTs, AWS keys, GitHub tokens, e
 - **>= 1500 lines**: Exported and reported under manifest `warnings`
 - **>= 3000 lines**: Excluded by default; interactive mode lets you select files to include anyway
 
-Use `--force-bundle` when oversized JSON files are reference data and retaining their
+Use `--force-bundle` to disable the per-file line limit for selected files. For oversized JSON, the exporter samples the document when retaining its
 schema and representative values is more useful than skipping them. The exporter
 retains up to five representatives per structural shape, reducing to a minimum of
 three when necessary. Sampling is in memory and never rewrites source files.
 
 ```bash
-baic . --non-interactive --paths data --max-file-lines 1000 --force-bundle
+baic . --non-interactive --paths data --force-bundle
+
+# Include an explicitly requested generated/ignored directory
+baic . --non-interactive --paths .gen_files/git_commit_exports/run \
+    --force-ignored --force-bundle
 ```
 
 ### Secrets (Skipped by default, include with `--include-secret-files`)
@@ -402,7 +407,7 @@ Example prompt to AI:
 usage: build-ai-context [-h] [--max-file-lines N] [--output-dir OUTPUT_DIR]
                        [--non-interactive] [--categories [CATEGORIES ...]]
                        [--paths [PATHS ...]] [--keywords [KEYWORDS ...]]
-                       [--task TASK | --task-clipboard] [--force-bundle]
+                       [--task TASK | --task-clipboard] [--force-ignored] [--force-bundle]
                        [--include-secret-files] [--project-overview]
                        [--tree] [--graph] [--format {txt,json}] [--redact] [--version]
                        [project_root]
@@ -420,7 +425,8 @@ options:
   --max-file-lines N    Skip repo source files with >= N lines (default: 3000;
                         0 disables the per-file limit). Output bundles are
                         always packed to 8000 lines max.
-  --force-bundle        Sample oversized JSON data without modifying source files
+  --force-ignored       Include ignored files under explicit --paths
+  --force-bundle        Bundle selected files without the per-file line limit
   --output-dir DIR      Custom output directory
   --non-interactive     Run without prompts
   --categories CATS     Categories to export
