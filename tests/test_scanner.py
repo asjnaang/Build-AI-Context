@@ -470,5 +470,76 @@ class TestGitignoreAwareTraversal:
         assert [item.rel_path.as_posix() for item in files] == ["backend/main.py"]
         assert skipped[".gitignore"] == 1
 
+
+class TestForceIgnoredTraversal:
+    def test_explicit_ignored_generated_path_can_be_scanned(self, tmp_path):
+        generated = tmp_path / ".gen_files" / "git_commit_exports" / "run"
+        generated.mkdir(parents=True)
+        (generated / "history.txt").write_text("commit history")
+        (tmp_path / ".gitignore").write_text(".gen_files/**\n")
+        (tmp_path / "app.py").write_text("print('normal')")
+
+        files, skipped = scan_supported_files(
+            tmp_path,
+            skip_secret_files=True,
+            force_ignored_paths=[str(generated)],
+        )
+
+        assert [item.rel_path.as_posix() for item in files] == [
+            ".gen_files/git_commit_exports/run/history.txt",
+            "app.py",
+        ]
+        assert skipped.get("default_excluded_dir", 0) == 0
+
+    def test_force_ignored_is_limited_to_requested_paths(self, tmp_path):
+        requested = tmp_path / ".gen_files" / "requested"
+        unrelated = tmp_path / ".gen_files" / "unrelated"
+        requested.mkdir(parents=True)
+        unrelated.mkdir(parents=True)
+        (requested / "include.txt").write_text("include")
+        (unrelated / "exclude.txt").write_text("exclude")
+
+        files, _ = scan_supported_files(
+            tmp_path,
+            skip_secret_files=True,
+            force_ignored_paths=[str(requested)],
+        )
+
+        assert [item.rel_path.as_posix() for item in files] == [
+            ".gen_files/requested/include.txt"
+        ]
+
+    def test_force_ignored_does_not_bypass_secret_safety(self, tmp_path):
+        generated = tmp_path / ".gen_files" / "requested"
+        generated.mkdir(parents=True)
+        (generated / ".env").write_text("TOKEN=secret")
+        (generated / "safe.txt").write_text("safe")
+
+        files, skipped = scan_supported_files(
+            tmp_path,
+            skip_secret_files=True,
+            force_ignored_paths=[str(generated)],
+        )
+
+        assert [item.rel_path.as_posix() for item in files] == [
+            ".gen_files/requested/safe.txt"
+        ]
+        assert sum(skipped.values()) == 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def test_expand_explicit_path_inputs_splits_quoted_existing_directories(tmp_path):
+    from build_ai_context.scanner import expand_explicit_path_inputs
+
+    first = tmp_path / "ignored output one"
+    second = tmp_path / "ignored-output-two"
+    first.mkdir()
+    second.mkdir()
+
+    assert expand_explicit_path_inputs([f"{first} {second}"], tmp_path) == [
+        str(first),
+        str(second),
+    ]

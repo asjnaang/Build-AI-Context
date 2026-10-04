@@ -290,7 +290,9 @@ def test_line_comma_and_mixed_path_input_select_the_same_files(tmp_path):
 
 
 def test_force_bundle_defaults_to_false():
-    assert build_parser().parse_args([]).force_bundle is False
+    args = build_parser().parse_args([])
+    assert args.force_bundle is False
+    assert args.force_ignored is False
 
 
 def test_force_bundle_samples_json_without_modifying_source(tmp_path):
@@ -342,7 +344,7 @@ def test_force_bundle_preserves_array_shapes(tmp_path):
     assert '"scalar-0"' in bundle
 
 
-def test_force_bundle_leaves_invalid_json_skipped(tmp_path):
+def test_force_bundle_includes_invalid_json_without_line_limit(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
     (project / "invalid.json").write_text("{\n" + "not-json\n" * 20 + "}")
@@ -354,7 +356,88 @@ def test_force_bundle_leaves_invalid_json_skipped(tmp_path):
     result, _, _ = run_exporter(args, None)
     assert result == 0
     manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
-    assert any(item["reason"] == "large_file_exceeds_skip_threshold"
-               for item in manifest["skipped_during_pack"])
+    assert manifest["skipped_during_pack"] == []
     assert any(item["reason"] == "force_bundle_invalid_json"
                for item in manifest["warnings"])
+    bundle = next(output.glob("*_bundle_*.txt")).read_text()
+    assert "===== BEGIN FILE: invalid.json =====" in bundle
+
+
+def test_force_bundle_includes_oversized_non_json_without_max_lines_override(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    source = project / "history.txt"
+    source.write_text("\n".join(f"line_{index}" for index in range(3500)))
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project), "--all", "--output-dir", str(output), "--force-bundle",
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    assert manifest["skipped_during_pack"] == []
+    assert manifest["selected_files"] == ["history.txt"]
+    bundle_text = "".join(path.read_text() for path in output.glob("*_bundle_*.txt"))
+    assert "===== BEGIN FILE: history.txt =====" in bundle_text
+
+
+def test_force_ignored_cli_exports_explicit_generated_path(tmp_path):
+    project = tmp_path / "project"
+    generated = project / ".gen_files" / "git_commit_exports" / "run"
+    generated.mkdir(parents=True)
+    (generated / "history.txt").write_text("commit history\n")
+    (project / ".gitignore").write_text(".gen_files/**\n")
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project),
+        "--non-interactive",
+        "--paths",
+        str(generated),
+        "--force-ignored",
+        "--force-bundle",
+        "--output-dir",
+        str(output),
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    assert manifest["selected_files"] == [
+        ".gen_files/git_commit_exports/run/history.txt"
+    ]
+    assert manifest["skipped_during_pack"] == []
+
+
+def test_force_ignored_cli_exports_multiple_ignored_directories_from_one_quoted_value(tmp_path):
+    project = tmp_path / "project"
+    first = project / "ignored output one"
+    second = project / "ignored-output-two"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+    (first / "first.txt").write_text("first\n")
+    (second / "second.txt").write_text("second\n")
+    (project / ".gitignore").write_text("ignored output one/\nignored-output-two/\n")
+    output = tmp_path / "output"
+
+    args = build_parser().parse_args([
+        str(project),
+        "--non-interactive",
+        "--paths",
+        f"{first} {second}",
+        "--force-ignored",
+        "--output-dir",
+        str(output),
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    assert manifest["selected_files"] == [
+        "ignored output one/first.txt",
+        "ignored-output-two/second.txt",
+    ]
+    assert manifest["selection"]["missing_paths"] == []

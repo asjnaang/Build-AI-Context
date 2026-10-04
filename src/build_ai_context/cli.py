@@ -28,6 +28,7 @@ from build_ai_context.constants import (
 )
 from build_ai_context.exporter import CodeExporter
 from build_ai_context.models import SourceFile
+from build_ai_context.scanner import expand_explicit_path_inputs
 from build_ai_context.update_source_file_headers import DEFAULT_EXCLUDES, walk_and_update
 
 
@@ -58,11 +59,20 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--force-ignored",
+        action="store_true",
+        help=(
+            "Include supported files under explicit --paths even when those paths "
+            "are excluded by .gitignore or generated-file/default exclusion rules. "
+            "Secret-like files still require --include-secret-files."
+        ),
+    )
+    parser.add_argument(
         "--force-bundle",
         action="store_true",
         help=(
-            "For oversized JSON data files, bundle an in-memory representative "
-            "sample instead of skipping the file. Source files are never modified."
+            "Bundle selected files regardless of --max-file-lines. Oversized JSON "
+            "is sampled in memory when possible; source files are never modified."
         ),
     )
     parser.add_argument(
@@ -298,8 +308,15 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             all_files, skipped_reasons = pre_scanned
         else:
             exporter.print_info(f"Scanning project: {root}")
+            forced_scan_paths = (
+                expand_explicit_path_inputs(args.paths, root)
+                if getattr(args, "force_ignored", False)
+                else []
+            )
             all_files, skipped_reasons = exporter.scan_supported_files(
-                root, skip_secret_files=skip_secret_files
+                root,
+                skip_secret_files=skip_secret_files,
+                force_ignored_paths=forced_scan_paths,
             )
 
         if not all_files:
@@ -363,10 +380,11 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             selected_files, force_bundle_events = exporter.force_bundle_json_files(
                 selected_files, args.max_file_lines
             )
+        effective_max_file_lines = 0 if args.force_bundle else args.max_file_lines
         chunks, split_items = exporter.split_into_chunks(
             selected_files,
             bundle_max_lines,
-            max_file_lines=args.max_file_lines,
+            max_file_lines=effective_max_file_lines,
         )
         warnings = [item for item in split_items if item.get("reason") == "large_file_warning"]
         warnings.extend(force_bundle_events)

@@ -170,9 +170,27 @@ def sha256_of_lines(lines: Sequence[str]) -> str:
 
 
 def scan_supported_files(
-    root: Path, skip_secret_files: bool
+    root: Path,
+    skip_secret_files: bool,
+    force_ignored_paths: Sequence[str] = (),
 ) -> Tuple[List[SourceFile], Dict[str, int]]:
-    """Scan supported files while pruning ignored directories before descent."""
+    """Scan supported files, optionally traversing explicitly requested ignored paths."""
+    normalized_forced_paths = _normalize_selection_paths(force_ignored_paths, root)
+
+    def can_force_include(rel_path: Path) -> bool:
+        rel = rel_path.as_posix().rstrip("/")
+        is_requested = any(
+            rel == requested
+            or rel.startswith(requested + "/")
+            or requested.startswith(rel + "/")
+            for requested in normalized_forced_paths
+        )
+        if not is_requested or ".git" in rel_path.parts:
+            return False
+        return not (
+            skip_secret_files
+            and path_matches_any_pattern(rel, DEFAULT_SECRET_PATTERNS)
+        )
     discovered: List[SourceFile] = []
     skipped_reasons: Dict[str, int] = defaultdict(int)
     inherited_patterns: Dict[Path, List[str]] = {
@@ -195,6 +213,8 @@ def scan_supported_files(
         for dirname in dirnames:
             rel_dir = current_rel / dirname
             ignored, reason = is_ignored(rel_dir, gitignore_spec, skip_secret_files)
+            if ignored and can_force_include(rel_dir):
+                ignored = False
             if ignored:
                 skipped_reasons[reason] += 1
             else:
@@ -206,6 +226,8 @@ def scan_supported_files(
             path = current_dir / filename
             rel_path = current_rel / filename
             ignored, reason = is_ignored(rel_path, gitignore_spec, skip_secret_files)
+            if ignored and can_force_include(rel_path):
+                ignored = False
             if ignored:
                 skipped_reasons[reason] += 1
                 continue
@@ -438,6 +460,64 @@ def filter_files_by_paths(
 
     matched.sort(key=lambda item: item.rel_path.as_posix())
     return matched, normalized_paths, missing_inputs
+
+
+def expand_explicit_path_inputs(raw_paths: Sequence[str], root: Path) -> List[str]:
+    """Split combined CLI path values using paths that actually exist on disk.
+
+    Shell aliases commonly forward one quoted value containing multiple paths.
+    Resolve the longest existing path at each word boundary so paths containing
+    spaces remain intact while multiple paths still become separate scan roots.
+    """
+    expanded: List[str] = []
+
+    def add(candidate: str) -> None:
+        value = candidate.strip()
+        if value and value not in expanded:
+            expanded.append(value)
+
+    def exists(candidate: str) -> bool:
+        path = Path(candidate).expanduser()
+        return (path if path.is_absolute() else root / path).exists()
+
+    def split_segment(segment: str) -> None:
+        candidate = segment.strip()
+        if not candidate:
+            return
+        if exists(candidate):
+            add(candidate)
+            return
+        words = candidate.split()
+        memo: Dict[int, Optional[List[str]]] = {}
+
+        def partition(start: int) -> Optional[List[str]]:
+            if start == len(words):
+                return []
+            if start in memo:
+                return memo[start]
+            for end in range(len(words), start, -1):
+                part = " ".join(words[start:end])
+                if not exists(part):
+                    continue
+                remainder = partition(end)
+                if remainder is not None:
+                    memo[start] = [part] + remainder
+                    return memo[start]
+            memo[start] = None
+            return None
+
+        resolved = partition(0)
+        if resolved is None:
+            add(candidate)
+            return
+        for value in resolved:
+            add(value)
+
+    for raw in raw_paths:
+        for line in raw.splitlines():
+            for segment in re.split(r"[,;]+", line):
+                split_segment(segment)
+    return expanded
 
 
 def _normalize_selection_paths(raw_paths: Sequence[str], root: Path) -> List[str]:
