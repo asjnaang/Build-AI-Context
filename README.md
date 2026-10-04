@@ -103,6 +103,8 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `--categories` | Export by category | `--categories python typescript` |
 | `--paths` | Export by path/filename | `--paths src tests` |
 | `--keywords` | Search in code content | `--keywords TODO FIXME` |
+| `--exclude-paths` | Remove files/folders from the final selected set | `--exclude-paths tests fixtures` |
+| `--exclude-formats` | Remove file extensions from the final selected set | `--exclude-formats .json *.md` |
 | `--task` | Replace the generated prompt's Task Contract placeholder | `--task "Fix the reported issue"` |
 | `--task-clipboard`, `--tc` | Read the Task Contract from the macOS clipboard | `--tc` |
 | `--non-interactive` | Run without prompts | `--non-interactive` |
@@ -344,6 +346,21 @@ baic . --non-interactive --keywords TODO
 baic . --non-interactive --paths src/components src/utils
 ```
 
+### Exclude paths or file formats from a selection
+
+Exclusions run after categories, paths, or keyword selection and immediately before bundling.
+They do not change the project-wide filetree, which still describes all scanned supported files.
+
+```bash
+# Include src and tests, then remove fixtures and all JSON/Markdown files
+baic . --non-interactive --paths src tests \
+    --exclude-paths tests/fixtures \
+    --exclude-formats .json md
+```
+
+`--exclude-paths` accepts the same relative paths, absolute paths, filenames, folders, commas,
+and multiline input as `--paths`. `--exclude-formats` accepts `json`, `.json`, or `*.json`.
+
 ### Include the task in the generated AI prompt
 
 ```bash
@@ -407,6 +424,8 @@ Example prompt to AI:
 usage: build-ai-context [-h] [--max-file-lines N] [--output-dir OUTPUT_DIR]
                        [--non-interactive] [--categories [CATEGORIES ...]]
                        [--paths [PATHS ...]] [--keywords [KEYWORDS ...]]
+                       [--exclude-paths [EXCLUDE_PATHS ...]]
+                       [--exclude-formats [EXCLUDE_FORMATS ...]]
                        [--task TASK | --task-clipboard] [--force-ignored] [--force-bundle]
                        [--include-secret-files] [--project-overview]
                        [--tree] [--graph] [--format {txt,json}] [--redact] [--version]
@@ -432,6 +451,8 @@ options:
   --categories CATS     Categories to export
   --paths PATHS         Files/folders to export
   --keywords KEYWORDS   Keywords to search in file content
+  --exclude-paths PATHS Remove files/folders from the final selected set
+  --exclude-formats EXT Remove extensions from the final selected set
   --task TASK            Replace the Task Contract placeholder in baic_prompt.md
   --task-clipboard, --tc Read the Task Contract from the macOS clipboard
   --include-secret-files Include secret-like files

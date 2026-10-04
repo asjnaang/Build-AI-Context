@@ -441,3 +441,46 @@ def test_force_ignored_cli_exports_multiple_ignored_directories_from_one_quoted_
         "ignored-output-two/second.txt",
     ]
     assert manifest["selection"]["missing_paths"] == []
+
+
+def test_cli_exclusions_apply_after_path_selection_and_are_recorded(tmp_path):
+    project = tmp_path / "project"
+    for relative_path in (
+        "src/main.py",
+        "src/generated/schema.py",
+        "src/config.json",
+        "tests/test_main.py",
+    ):
+        path = project / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {path.name}\n")
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project), "--non-interactive", "--paths", "src", "tests",
+        "--exclude-paths", "src/generated", "--exclude-formats", "json",
+        "--output-dir", str(output),
+    ])
+    result, _, _ = run_exporter(args, None)
+    assert result == 0
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    assert manifest["selected_files"] == ["src/main.py", "tests/test_main.py"]
+    assert manifest["selection"]["excluded_paths"] == ["src/generated/schema.py"]
+    assert manifest["selection"]["excluded_formats"] == [".json"]
+    bundle = "".join(path.read_text() for path in output.glob("*_bundle_*.txt"))
+    assert "===== BEGIN FILE: src/main.py =====" in bundle
+    assert "===== BEGIN FILE: tests/test_main.py =====" in bundle
+    assert "===== BEGIN FILE: src/generated/schema.py =====" not in bundle
+    assert "===== BEGIN FILE: src/config.json =====" not in bundle
+
+
+def test_cli_exclusions_can_remove_every_selected_file(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "only.py").write_text("print('hello')\n")
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project), "--all", "--exclude-formats", "py", "--output-dir", str(output)
+    ])
+    result, _, _ = run_exporter(args, None)
+    assert result == 0
+    assert not output.exists()
