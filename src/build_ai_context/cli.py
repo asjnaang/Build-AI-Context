@@ -109,6 +109,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Keywords to search in file content (non-interactive mode).",
     )
+    parser.add_argument(
+        "--exclude-paths",
+        nargs="*",
+        default=[],
+        help="Files or folders to remove from the final selected set before bundling.",
+    )
+    parser.add_argument(
+        "--exclude-formats",
+        nargs="*",
+        default=[],
+        help="File extensions to remove from the final selected set, such as .json py or *.md.",
+    )
     task_group = parser.add_mutually_exclusive_group()
     task_group.add_argument(
         "--task",
@@ -367,8 +379,16 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             render_folder_table(exporter, all_files)
             selected_files, selection_metadata = interactive_select_files(exporter, all_files, root)
 
+        selected_files, excluded_paths, excluded_formats = exporter.exclude_files(
+            selected_files,
+            root,
+            getattr(args, "exclude_paths", []),
+            getattr(args, "exclude_formats", []),
+        )
+        selection_metadata["excluded_paths"] = excluded_paths
+        selection_metadata["excluded_formats"] = excluded_formats
         if not selected_files:
-            exporter.print_warning("No files selected. Nothing was exported.")
+            exporter.print_warning("No files remain after applying exclusions. Nothing was exported.")
             return 0, None, None
 
         exporter.print_info(
