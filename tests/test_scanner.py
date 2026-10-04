@@ -7,6 +7,7 @@ from unittest.mock import patch
 from build_ai_context.scanner import (
     parse_intelligent_input,
     filter_files_by_paths,
+    exclude_files,
     _normalize_selection_paths,
     scan_supported_files,
 )
@@ -543,3 +544,25 @@ def test_expand_explicit_path_inputs_splits_quoted_existing_directories(tmp_path
         str(first),
         str(second),
     ]
+
+
+class TestFinalSetExclusions:
+    def test_excludes_folder_and_normalized_formats(self, sample_files):
+        root, files = sample_files
+        kept, paths, formats = exclude_files(
+            files, root, ["docs"], ["py", "*.PY", ".py"]
+        )
+        assert [item.rel_path.as_posix() for item in kept] == ["README.md"]
+        assert paths == ["docs/guide.md/index.md"]
+        assert formats == [".py"]
+
+    def test_exclusions_only_apply_to_supplied_final_set(self, sample_files):
+        root, files = sample_files
+        selected = [item for item in files if item.rel_path.as_posix().startswith("src/")]
+        kept, paths, formats = exclude_files(selected, root, ["README.md"], [".md"])
+        assert [item.rel_path.as_posix() for item in kept] == [
+            "src/main.py",
+            "src/utils.py",
+        ]
+        assert paths == ["README.md"]
+        assert formats == [".md"]

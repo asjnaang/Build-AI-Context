@@ -100,6 +100,7 @@ class CodeExporter:
     filter_files_by_paths = staticmethod(scanner.filter_files_by_paths)
     _normalize_selection_paths = staticmethod(scanner._normalize_selection_paths)
     filter_files_by_keywords = staticmethod(scanner.filter_files_by_keywords)
+    exclude_files = staticmethod(scanner.exclude_files)
 
     def parse_intelligent_input(
         self, raw: str, files: Sequence[SourceFile], root: Path
@@ -256,6 +257,8 @@ class CodeExporter:
         task: Optional[str] = None,
         force_bundle: bool = False,
         force_ignored: bool = False,
+        exclude_paths: List[str] | None = None,
+        exclude_formats: List[str] | None = None,
     ) -> ExportResult:
         """Run the full export process."""
         root = Path(project_root or Path.cwd()).expanduser().resolve()
@@ -309,8 +312,13 @@ class CodeExporter:
                 root=root,
             )
 
+        selected_files, excluded_paths, excluded_formats = self.exclude_files(
+            selected_files, root, exclude_paths or [], exclude_formats or []
+        )
+        selection_metadata["excluded_paths"] = excluded_paths
+        selection_metadata["excluded_formats"] = excluded_formats
         if not selected_files:
-            self.print_warning("No files selected. Nothing was exported.")
+            self.print_warning("No files remain after applying exclusions. Nothing was exported.")
             return ExportResult(
                 output_dir=Path(output_dir or "."),
                 manifest_path=Path("."),

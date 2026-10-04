@@ -541,6 +541,50 @@ def _normalize_selection_paths(raw_paths: Sequence[str], root: Path) -> List[str
     return normalized
 
 
+def _normalize_exclude_formats(raw_formats: Sequence[str]) -> List[str]:
+    """Normalize extension exclusions from repeated, comma, or newline-separated values."""
+    normalized: List[str] = []
+    for raw in raw_formats:
+        for token in re.split(r"[,;\s]+", raw):
+            value = token.strip().lower()
+            if not value:
+                continue
+            if value.startswith("*."):
+                value = value[1:]
+            elif not value.startswith("."):
+                value = "." + value
+            if value not in normalized:
+                normalized.append(value)
+    return normalized
+
+
+def exclude_files(
+    files: Sequence[SourceFile],
+    root: Path,
+    raw_paths: Sequence[str] = (),
+    raw_formats: Sequence[str] = (),
+) -> Tuple[List[SourceFile], List[str], List[str]]:
+    """Remove path and extension matches from the final set selected for bundling."""
+    path_inputs: List[str] = []
+    if raw_paths:
+        parsed = parse_intelligent_input("\n".join(raw_paths), files, root)
+        path_inputs = parsed or list(raw_paths)
+    if path_inputs:
+        excluded_by_path, normalized_paths, _ = filter_files_by_paths(files, root, path_inputs)
+    else:
+        excluded_by_path, normalized_paths = [], []
+    excluded_path_set = {item.rel_path.as_posix() for item in excluded_by_path}
+    normalized_formats = _normalize_exclude_formats(raw_formats)
+    kept = [
+        item
+        for item in files
+        if item.rel_path.as_posix() not in excluded_path_set
+        and item.rel_path.suffix.lower() not in normalized_formats
+    ]
+    kept.sort(key=lambda item: item.rel_path.as_posix())
+    return kept, normalized_paths, normalized_formats
+
+
 def filter_files_by_keywords(
     files: Sequence[SourceFile], keywords: Sequence[str]
 ) -> Tuple[List[SourceFile], List[str]]:
