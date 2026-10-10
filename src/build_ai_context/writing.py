@@ -24,7 +24,11 @@ from build_ai_context.constants import (
 )
 from build_ai_context.models import FileChunk, SourceFile
 
-_BAIC_PROMPT_MD_PATH = Path(__file__).parent / "baic_prompt.md"
+_PROMPT_PATHS = (
+    Path(__file__).parent / "baic_prompt.md",
+    Path(__file__).parent / "baic_prompt_6_v2.md",
+)
+_BAIC_PROMPT_MD_PATH = _PROMPT_PATHS[0]
 _TASK_PLACEHOLDER = "[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]"
 
 
@@ -266,9 +270,12 @@ def write_bundles_and_manifest(
         if filetree_path.exists():
             filetree_content = filetree_path.read_text(encoding="utf-8")
 
-    # Write standalone baic_prompt.md file in the output directory
-    baic_prompt_md_path = output_dir / "baic_prompt.md"
-    baic_prompt_md_path.write_text(prompt_content, encoding="utf-8")
+    # Write both agent prompts into every generated output directory.
+    for prompt_path in _PROMPT_PATHS:
+        if not prompt_path.is_file():
+            raise FileNotFoundError(f"Bundled prompt is missing: {prompt_path}")
+        content = prompt_content if prompt_path == _BAIC_PROMPT_MD_PATH else prompt_path.read_text(encoding="utf-8")
+        (output_dir / prompt_path.name).write_text(content, encoding="utf-8")
 
     for index, bundle in enumerate(bundles, start=1):
         bundle_name = f"{folder_name}_bundle_{index:03d}_{timestamp}.txt"
@@ -318,6 +325,7 @@ def write_bundles_and_manifest(
                 {
                     "path": rel_path_str,
                     "category": chunk.category,
+                    "encoding": chunk.encoding,
                     "size_bytes": source.size_bytes,
                     "sha256": source.sha256,
                     "total_file_lines": source.line_count,
