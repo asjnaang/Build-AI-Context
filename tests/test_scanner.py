@@ -566,3 +566,31 @@ class TestFinalSetExclusions:
         ]
         assert paths == ["README.md"]
         assert formats == [".md"]
+
+
+def test_scan_supports_log_and_jsonl_files(tmp_path):
+    (tmp_path / "app.log").write_text("startup complete\n")
+    (tmp_path / "events.jsonl").write_text('{"event":"startup"}\n')
+
+    files, skipped = scan_supported_files(tmp_path, skip_secret_files=True)
+
+    assert [(item.rel_path.as_posix(), item.category) for item in files] == [
+        ("app.log", "config_docs"),
+        ("events.jsonl", "config_docs"),
+    ]
+    assert skipped == {}
+
+
+def test_gitignored_log_still_requires_force_ignored(tmp_path):
+    (tmp_path / ".gitignore").write_text("*.log\n")
+    (tmp_path / "app.log").write_text("startup complete\n")
+
+    files, _ = scan_supported_files(tmp_path, skip_secret_files=True)
+    assert files == []
+
+    forced, _ = scan_supported_files(
+        tmp_path,
+        skip_secret_files=True,
+        force_ignored_paths=["app.log"],
+    )
+    assert [item.rel_path.as_posix() for item in forced] == ["app.log"]

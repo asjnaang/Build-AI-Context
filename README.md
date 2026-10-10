@@ -130,7 +130,10 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `web_ui` | `.html`, `.css`, `.scss`, `.vue`, `.svelte` |
 | `shell` | `.sh`, `.bash`, `.zsh` |
 | `flutter` | `.dart` |
-| `config_docs` | `.json`, `.yaml`, `.toml`, `.md`, `.sql`, `.csv` |
+| `config_docs` | `.json`, `.jsonl`, `.yaml`, `.toml`, `.md`, `.txt`, `.log`, `.sql`, `.csv` |
+
+`.log` and `.jsonl` files are supported as config/docs. Files ignored by `.gitignore` remain
+excluded by default; include a specific ignored path with `--paths <path> --force-ignored`.
 
 ### Category Aliases
 
