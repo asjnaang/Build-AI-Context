@@ -269,6 +269,7 @@ def split_into_chunks(
                     end_line=total_lines,
                     total_file_lines=total_lines,
                     lines=lines,
+                    encoding=source.encoding,
                 )
             )
         else:
