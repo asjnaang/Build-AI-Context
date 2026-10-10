@@ -4,6 +4,7 @@ File scanning, detection, and selection for build_ai_context.
 
 from __future__ import annotations
 
+import base64
 import fnmatch
 import hashlib
 import os
@@ -149,6 +150,12 @@ def is_probably_binary(path: Path) -> bool:
         return True
 
 
+def read_binary_lines(path: Path) -> List[str]:
+    """Return binary file bytes as wrapped Base64 text lines."""
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return [encoded[index:index + 76] for index in range(0, len(encoded), 76)]
+
+
 def read_text_lines(path: Path) -> List[str]:
     """Read a text file with multiple encoding attempts."""
     encodings = ["utf-8", "utf-8-sig", "latin-1"]
@@ -235,12 +242,17 @@ def scan_supported_files(
             if not category:
                 skipped_reasons["unsupported_type"] += 1
                 continue
-            if is_probably_binary(path):
+            is_gzip = path.suffix.lower() == ".gz"
+            binary = is_probably_binary(path)
+            if binary and not is_gzip:
                 skipped_reasons["binary"] += 1
                 continue
             try:
-                lines = read_text_lines(path)
-                size_bytes = path.stat().st_size
+                encoding = "base64" if is_gzip else "text"
+                lines = read_binary_lines(path) if is_gzip else read_text_lines(path)
+                raw_bytes = path.read_bytes()
+                size_bytes = len(raw_bytes)
+                sha256 = hashlib.sha256(raw_bytes).hexdigest()
             except OSError:
                 skipped_reasons["read_error"] += 1
                 continue
@@ -251,8 +263,9 @@ def scan_supported_files(
                     category=category,
                     line_count=len(lines),
                     size_bytes=size_bytes,
-                    sha256=sha256_of_lines(lines),
+                    sha256=sha256,
                     lines=lines,
+                    encoding=encoding,
                 )
             )
     discovered.sort(key=lambda item: item.rel_path.as_posix())
