@@ -10,10 +10,14 @@ Project overview and manifest writing for build_ai_context.
 
 from __future__ import annotations
 
+import gzip
+import hashlib
+import io
 import json
+import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Set
 
 from build_ai_context.chunking import render_chunk_block
 from build_ai_context.constants import (
@@ -219,6 +223,7 @@ def write_bundles_and_manifest(
     max_file_lines: Optional[int] = None,
     warnings: Sequence[Dict[str, object]] = (),
     task: Optional[str] = None,
+    transport: str = "text",
 ) -> Path:
     """Write bundles and manifest to the output directory."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -261,7 +266,7 @@ def write_bundles_and_manifest(
         else:
             timestamp = generate_timestamp()
 
-    # Prepare baic_prompt.md content to prepend to every bundle
+    # Prepare the generated prompt and copy both supported prompt variants.
     prompt_content = get_baic_prompt_md_content(task)
 
     # Filetree content for the first bundle
@@ -277,6 +282,91 @@ def write_bundles_and_manifest(
         content = prompt_content if prompt_path == _BAIC_PROMPT_MD_PATH else prompt_path.read_text(encoding="utf-8")
         (output_dir / prompt_path.name).write_text(content, encoding="utf-8")
 
+        (output_dir / prompt_path.name).write_text(content, encoding="utf-8")
+    if transport == "tar-gz":
+        included_paths: Set[str] = {
+            chunk.rel_path.as_posix() for bundle in bundles for chunk in bundle
+        }
+        archive_name = f"{folder_name}_context_{timestamp}.tar.gz"
+        archive_path = output_dir / archive_name
+        with archive_path.open("wb") as raw_output:
+            with gzip.GzipFile(filename="", mode="wb", fileobj=raw_output, mtime=0) as gz_output:
+                with tarfile.open(fileobj=gz_output, mode="w", format=tarfile.PAX_FORMAT) as archive:
+                    for source in sorted(selected_files, key=lambda item: item.rel_path.as_posix()):
+                        rel_path = source.rel_path.as_posix()
+                        if rel_path not in included_paths:
+                            continue
+                        data = source.abs_path.read_bytes()
+                        if len(data) != source.size_bytes or hashlib.sha256(data).hexdigest() != source.sha256:
+                            raise ValueError(f"Source changed during export: {rel_path}")
+                        info = tarfile.TarInfo(rel_path)
+                        info.size = len(data)
+                        info.mode = source.abs_path.stat().st_mode & 0o777
+                        info.mtime = 0
+                        info.uid = info.gid = 0
+                        info.uname = info.gname = ""
+                        archive.addfile(info, io.BytesIO(data))
+                    if filetree_content is not None and filetree_name:
+                        data = filetree_content.encode("utf-8")
+                        info = tarfile.TarInfo(f".ai-context/{filetree_name}")
+                        info.size = len(data)
+                        info.mode = 0o644
+                        info.mtime = 0
+                        archive.addfile(info, io.BytesIO(data))
+                    for prompt_path in _PROMPT_PATHS:
+                        data = (output_dir / prompt_path.name).read_bytes()
+                        info = tarfile.TarInfo(f".ai-context/prompts/{prompt_path.name}")
+                        info.size = len(data)
+                        info.mode = 0o644
+                        info.mtime = 0
+                        archive.addfile(info, io.BytesIO(data))
+        archive_bytes = archive_path.read_bytes()
+        entries = [
+            {
+                "path": source.rel_path.as_posix(),
+                "category": source.category,
+                "content_kind": "binary" if source.encoding != "text" else "text",
+                "source_format": "gzip" if source.rel_path.suffix.lower() == ".gz" else None,
+                "transport_encoding": "identity",
+                "size_bytes": source.size_bytes,
+                "sha256": source.sha256,
+                "mode": source.abs_path.stat().st_mode & 0o777,
+            }
+            for source in sorted(selected_files, key=lambda item: item.rel_path.as_posix())
+            if source.rel_path.as_posix() in included_paths
+        ]
+        manifest.update({
+            "schema_version": 3,
+            "selected_files": [entry["path"] for entry in entries],
+            "summary": {
+                **manifest["summary"],
+                "selected_file_count": len(entries),
+                "selected_total_lines": sum(
+                    source.line_count for source in selected_files
+                    if source.rel_path.as_posix() in included_paths
+                ),
+                "selected_total_bytes": sum(entry["size_bytes"] for entry in entries),
+            },
+            "transport": {
+                "format": "tar+gzip",
+                "archive": archive_name,
+                "size_bytes": len(archive_bytes),
+                "sha256": hashlib.sha256(archive_bytes).hexdigest(),
+                "deterministic": True,
+            },
+            "archive_entries": entries,
+            "bundle_count": 0,
+            "bundles": [],
+        })
+        manifest_name = f"{folder_name}_manifest_{timestamp}.json"
+        manifest_path = output_dir / manifest_name
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False, default=str) + "\n",
+            encoding=DEFAULT_TEXT_ENCODING,
+        )
+        return manifest_path
+    if transport != "text":
+        raise ValueError("transport must be 'tar-gz' or 'text'")
     for index, bundle in enumerate(bundles, start=1):
         bundle_name = f"{folder_name}_bundle_{index:03d}_{timestamp}.txt"
         bundle_path = output_dir / bundle_name
