@@ -41,6 +41,7 @@ CATEGORY_EXTENSIONS: Dict[str, Set[str]] = {
         ".log",
         ".sql",
         ".csv",
+        ".gz"
     },
 }
 
