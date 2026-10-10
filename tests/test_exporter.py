@@ -384,6 +384,7 @@ def test_gzip_manifest_records_base64_and_prompts_are_copied(tmp_path, monkeypat
         interactive=False,
         paths=["history.json.gz"],
         task="Bundle gzip history",
+        transport="text",
     )
 
     manifest = json.loads(result.manifest_path.read_text())
@@ -396,3 +397,40 @@ def test_gzip_manifest_records_base64_and_prompts_are_copied(tmp_path, monkeypat
     assert entry["encoding"] == "base64"
     assert (result.output_dir / "baic_prompt.md").read_text() == "Task: Bundle gzip history"
     assert (result.output_dir / "baic_prompt_6_v2.md").read_text() == "Prompt v2"
+
+
+def test_default_transport_writes_deterministic_tar_gz_manifest_and_prompts(tmp_path):
+    import hashlib
+    import json
+    import tarfile
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "app.py").write_text("print('hello')\n")
+    out = tmp_path / "out"
+    result = CodeExporter().export(project_root=root, output_dir=out, interactive=False)
+    manifest = json.loads(result.manifest_path.read_text())
+    archive = out / manifest["transport"]["archive"]
+    assert manifest["transport"]["format"] == "tar+gzip"
+    assert manifest["transport"]["sha256"] == hashlib.sha256(archive.read_bytes()).hexdigest()
+    assert manifest["archive_entries"][0]["path"] == "app.py"
+    with tarfile.open(archive, "r:gz") as package:
+        assert package.extractfile("app.py").read() == b"print('hello')\n"
+        names = package.getnames()
+    assert ".ai-context/prompts/baic_prompt.md" in names
+    assert ".ai-context/prompts/baic_prompt_6_v2.md" in names
+    assert (out / "baic_prompt.md").is_file()
+    assert (out / "baic_prompt_6_v2.md").is_file()
+    assert list(out.glob("*_bundle_*.txt")) == []
+
+
+def test_text_transport_remains_available(tmp_path):
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "app.py").write_text("print('hello')\n")
+    out = tmp_path / "out"
+    CodeExporter().export(
+        project_root=root, output_dir=out, interactive=False, transport="text"
+    )
+    assert list(out.glob("*_bundle_*.txt"))
+    assert list(out.glob("*_context_*.tar.gz")) == []

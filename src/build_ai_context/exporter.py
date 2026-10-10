@@ -218,6 +218,7 @@ class CodeExporter:
         max_file_lines: int | None = None,
         warnings: Sequence[Dict[str, object]] = (),
         task: Optional[str] = None,
+        transport: str = "text",
     ) -> Path:
         """Write bundles and manifest to the output directory."""
         return writing.write_bundles_and_manifest(
@@ -237,6 +238,7 @@ class CodeExporter:
             max_file_lines=max_file_lines,
             warnings=warnings,
             task=task,
+            transport=transport,
         )
 
     # -------------------------------------------------------------------------
@@ -257,11 +259,16 @@ class CodeExporter:
         task: Optional[str] = None,
         force_bundle: bool = False,
         force_ignored: bool = False,
+        transport: str = "tar-gz",
         exclude_paths: List[str] | None = None,
         exclude_formats: List[str] | None = None,
     ) -> ExportResult:
         """Run the full export process."""
         root = Path(project_root or Path.cwd()).expanduser().resolve()
+        if transport not in {"tar-gz", "text"}:
+            raise ValueError("transport must be 'tar-gz' or 'text'")
+        if transport == "tar-gz" and self.redact:
+            raise ValueError("redact requires text transport; tar-gz preserves exact source bytes")
         if not root.exists():
             raise ValueError(f"Project root does not exist: {root}")
         if not root.is_dir():
@@ -380,6 +387,7 @@ class CodeExporter:
             filetree_content=filetree_content,
             timestamp=timestamp,
             task=task,
+            transport=transport,
         )
 
         overview_path = None
@@ -405,8 +413,8 @@ class CodeExporter:
             output_dir=out_dir,
             manifest_path=manifest_path,
             overview_path=overview_path,
-            bundles_created=len(bundles),
-            files_exported=len(selected_files),
+            bundles_created=1 if transport == "tar-gz" else len(bundles),
+            files_exported=len(selected_files) - len(skipped_during_split),
             skipped_items=skipped_during_processing,
             missing_paths=list(selection_metadata.get("missing_paths", [])),
             filetree_path=None,

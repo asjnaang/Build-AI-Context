@@ -1,5 +1,24 @@
 # AI Coding Agent Contract: Implementation and Artifact Delivery
 
+## Preferred three-attachment bootstrap (tar.gz)
+
+The normal BAIC package contains exactly three external attachments: a `*_context_*.tar.gz` archive, its
+matching `*_manifest_*.json`, and this prompt. Treat legacy `*_bundle_*.txt` files as a fallback transport.
+
+Before repository analysis or editing, select the newest relevant manifest by `created_at_utc`, confirm its
+`transport.format` is `tar+gzip`, and verify the named archive byte size and SHA-256. Safely inspect and extract
+the archive into an immutable package directory. Reject absolute paths, `..`, duplicate normalized paths,
+links, devices, FIFOs, sockets, unmanifested source entries, missing entries, and any extracted size or
+SHA-256 mismatch. Do not blindly trust `tarfile.extractall()`. Extract regular files and directories only,
+then validate every `archive_entries` path byte-for-byte against the manifest. Existing nested `.gz` files are
+real repository files: preserve them and decompress copies only when their contents are relevant. Use the
+validated extracted files as exact source preimages. The archive also contains `.ai-context/` supporting
+material, but the external manifest remains authoritative for initial validation.
+
+If the manifest instead names `bundles`, use the legacy embedded text-bundle extractor later in this prompt.
+Do not try to parse a tar.gz archive as a text bundle.
+
+
 ## Task
 
 [PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]
