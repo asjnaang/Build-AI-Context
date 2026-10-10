@@ -25,6 +25,7 @@ def bundle_header(chunk: FileChunk) -> str:
         f"{'=' * 60}\n"
         f"===== BEGIN FILE: {chunk.rel_path.as_posix()} =====\n"
         f"# category : {chunk.category}\n"
+        f"# encoding : {chunk.encoding}\n"
         f"# chunk : {idx}/{total}\n"
         f"# line_range : {chunk.start_line}-{chunk.end_line}\n"
         f"# total_lines : {chunk.total_file_lines}\n"
@@ -66,6 +67,7 @@ def chunk_overhead_lines(redact: bool = False) -> int:
         end_line=1,
         total_file_lines=1,
         lines=["x"],
+        encoding="text",
     )
     return len(render_chunk_block(dummy, redact).splitlines()) - 1
 
@@ -168,6 +170,7 @@ def force_bundle_json_files(
                     size_bytes=len(text.encode("utf-8")),
                     sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
                     lines=lines,
+                    encoding=source.encoding,
                 )
                 details = {
                     "path": source.rel_path.as_posix(),
@@ -284,6 +287,7 @@ def split_into_chunks(
                         end_line=end,
                         total_file_lines=total_lines,
                         lines=lines[start:end],
+                        encoding=source.encoding,
                     )
                 )
 

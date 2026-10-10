@@ -1,5 +1,6 @@
 """Tests for build_ai_context package."""
 
+import json
 import pytest
 from pathlib import Path
 
@@ -360,3 +361,38 @@ class TestExportConfig:
         assert config.max_lines == 8000
         assert config.include_secret_files is False
         assert config.interactive is True
+
+
+def test_gzip_manifest_records_base64_and_prompts_are_copied(tmp_path, monkeypatch):
+    import gzip
+    from build_ai_context import writing
+
+    root = tmp_path / "project"
+    root.mkdir()
+    archive = root / "history.json.gz"
+    archive.write_bytes(gzip.compress(b'{"version":"1.4.0"}\n', mtime=0))
+    prompt = tmp_path / "baic_prompt.md"
+    prompt.write_text("Task: [PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]")
+    prompt_v2 = tmp_path / "baic_prompt_6_v2.md"
+    prompt_v2.write_text("Prompt v2")
+    monkeypatch.setattr(writing, "_PROMPT_PATHS", (prompt, prompt_v2))
+    monkeypatch.setattr(writing, "_BAIC_PROMPT_MD_PATH", prompt)
+
+    result = CodeExporter().export(
+        project_root=root,
+        output_dir=tmp_path / "out",
+        interactive=False,
+        paths=["history.json.gz"],
+        task="Bundle gzip history",
+    )
+
+    manifest = json.loads(result.manifest_path.read_text())
+    entry = next(
+        item
+        for bundle in manifest["bundles"]
+        for item in bundle["files"]
+        if item["path"] == "history.json.gz"
+    )
+    assert entry["encoding"] == "base64"
+    assert (result.output_dir / "baic_prompt.md").read_text() == "Task: Bundle gzip history"
+    assert (result.output_dir / "baic_prompt_6_v2.md").read_text() == "Prompt v2"

@@ -594,3 +594,23 @@ def test_gitignored_log_still_requires_force_ignored(tmp_path):
         force_ignored_paths=["app.log"],
     )
     assert [item.rel_path.as_posix() for item in forced] == ["app.log"]
+
+
+def test_scan_supports_gzip_as_base64_with_original_hash(tmp_path):
+    import base64
+    import gzip
+    import hashlib
+
+    payload = b"historic changelog\nversion 1.4.0\n"
+    archive = tmp_path / "history.md.gz"
+    archive.write_bytes(gzip.compress(payload, mtime=0))
+
+    files, skipped = scan_supported_files(tmp_path, skip_secret_files=True)
+
+    assert skipped == {}
+    assert len(files) == 1
+    source = files[0]
+    assert source.encoding == "base64"
+    assert base64.b64decode("".join(source.lines)) == archive.read_bytes()
+    assert source.size_bytes == len(archive.read_bytes())
+    assert source.sha256 == hashlib.sha256(archive.read_bytes()).hexdigest()
