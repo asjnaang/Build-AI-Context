@@ -76,6 +76,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--transport",
+        choices=["tar-gz", "text"],
+        default="tar-gz",
+        help=(
+            "Context transport (default: tar-gz). tar-gz creates one exact-byte archive, "
+            "one external manifest, and the generated prompt; text retains legacy bundles."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         default=None,
         help="Optional output directory. Defaults to a timestamped folder under the current directory.",
@@ -299,6 +308,8 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
 
     try:
         task = resolve_task_content(args)
+        if args.transport == "tar-gz" and getattr(args, "redact", False):
+            raise ValueError("--redact requires --transport text; tar-gz preserves exact source bytes")
         root = Path(args.project_root).expanduser().resolve()
         if not root.exists():
             print(f"Error: Project root does not exist: {root}", file=sys.stderr)
@@ -463,6 +474,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             filetree_content=filetree_content,
             timestamp=timestamp,
             task=task,
+            transport=args.transport,
         )
 
         overview_path = None
@@ -481,7 +493,9 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         exporter.print_success(f"Manifest         : {manifest_path}")
         if overview_path is not None:
             exporter.print_success(f"Project overview : {overview_path}")
-        exporter.print_success(f"Bundles created  : {len(bundles)}")
+        exporter.print_success(
+            f"Packages created : {1 if args.transport == 'tar-gz' else len(bundles)}"
+        )
         exporter.print_success(f"Files exported   : {len(selected_files)}")
 
         if warnings:
@@ -497,7 +511,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             print(
                 f"\n📝 Open 'baic_prompt.md' in the output directory and replace the task description "
                 f"(under ## Task Contract) with your specific feature request or question or changes needed.\n"
-                f"Then upload all bundle files along with baic_prompt.md and ask your AI assistant address the promt.md "
+                f"Then upload the tar.gz archive, manifest JSON, and baic_prompt.md and ask your AI assistant address the promt.md "
                 f"for best results.\n\n"
             )
 
