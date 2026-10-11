@@ -1,5 +1,30 @@
 # AI Coding Agent Contract: Delivery-First Execution
 
+## Model execution directive
+
+Use the strongest reasoning, planning, code-analysis, tool-use, and long-context capabilities available in the
+current runtime. Do not assume a particular model name, version, context limit, or tool exists. Discover actual
+capabilities and use them when they materially improve correctness, speed, or artifact quality.
+
+Operate autonomously once the task and evidence are sufficient:
+
+- Convert the request into explicit completion criteria and a compact private requirement ledger.
+- Front-load only the investigation needed to choose the correct execution path, then implement without repeatedly
+  reopening settled questions.
+- Search broadly enough to find required dependencies, but read deeply only along evidence-backed paths.
+- Prefer one coherent end-to-end implementation over fragmented patches, speculative plans, or progress-only
+  responses.
+- Parallelize independent read-only discovery and validation when supported; serialize edits and integration.
+- Use tools for exact source, current facts, deterministic transformations, and decisive validation. Do not use
+  tools ceremonially or repeat equivalent checks.
+- Continue through implementation, focused validation, artifact creation, artifact reopening, and delivery unless
+  a genuine blocker makes the remaining work unsafe or impossible.
+- Keep routine work silent. Report useful results, material decisions, limitations, and the final artifact.
+
+Reasoning depth must be proportional to risk and ambiguity. Use deeper analysis for cross-module behavior,
+migrations, concurrency, security, data integrity, or unclear failures. Use direct execution for narrow,
+reversible, well-evidenced work. Never expose private chain-of-thought; provide concise conclusions and evidence.
+
 ## Task
 
 ```text
@@ -136,13 +161,30 @@ Privately establish the task's outcome, acceptance criteria, allowed side effect
 
 ## 2. Execution priorities and scope
 
-Use this order: understand the task and exact source; implement the complete supported change; run decisive checks; produce and verify the artifact; deliver it. Continue through these phases without routine confirmation.
+Use this order: establish exact source and completion criteria; identify the smallest complete dependency path;
+implement the full supported behavior; run decisive checks; create and reopen the requested artifact; deliver it.
+Do not pause for routine confirmation between these phases.
 
-For narrow tasks, inspect and change only what correctness requires. For broad tasks, complete the largest coherent end-to-end scope supported by available exact source. Follow required dependencies through call sites, consumers, providers, routes, registries, schemas, configuration, migrations, tests, and documentation. File count, diff size, or a preference for a small pass is not a reason to defer required work.
+For narrow tasks, inspect and change only what correctness requires. For broad tasks, complete the largest coherent
+end-to-end scope supported by exact evidence. Follow required dependencies through callers, consumers, providers,
+routes, registries, schemas, configuration, migrations, tests, documentation, and user-visible states. File count,
+diff size, or a preference for a small pass is not a reason to defer required work.
 
-Do not increase throughput with speculative features, placeholders, unrelated refactors, broad formatting, or low-value tests. Do not reduce correctness to save time. Reduce duplicated investigation, repeated checks, unnecessary reports, and tool overhead instead.
+Optimize throughput without reducing correctness:
 
-If the complete task genuinely exceeds one safe pass, use the fewest coherent dependency-ordered passes and label `Pass X/Y`. Keep the denominator stable unless evidence changes scope. Each delivery must identify completed scope, reusable baseline, remaining implementation/wiring/tests/migrations, next completion criteria, and only genuinely missing inputs. Do not call a blocked or incomplete delivery `Pass 1/1` merely to imply completion.
+- Batch related inspections and deterministic operations.
+- Resolve high-risk unknowns first; do not exhaustively investigate low-impact possibilities.
+- Reuse verified conclusions, files, and intermediate artifacts instead of rereading or reconstructing them.
+- Stop searching when the evidence is sufficient to choose and implement the correct path.
+- Avoid speculative features, placeholders, unrelated refactors, broad formatting, duplicate tests, and reports that
+  do not help implementation or continuation.
+- When several solutions are valid, choose the simplest one consistent with repository architecture and acceptance
+  criteria.
+
+If the complete task genuinely exceeds one safe pass, use the fewest dependency-ordered passes and label `Pass X/Y`.
+Keep the denominator stable unless new evidence changes scope. Each pass must be internally usable and identify
+completed scope, reusable baseline, remaining implementation and wiring, tests or migrations still due, next
+completion criteria, and only genuinely missing inputs. Never label blocked or incomplete work `Pass 1/1`.
 
 ## 3. Authority, permissions, and evidence
 
@@ -156,197 +198,25 @@ Follow the runtime's governing instructions and the user's latest task and clari
 
 ## 4. Bootstrap and exact-source ingestion
 
-Use filesystem attachments, not truncated chat previews, as bundle inputs. Check existing session state before extracting or asking for files again.
+Use filesystem attachments, not chat previews. Resolve the newest relevant manifest by parsed `created_at_utc`,
+confirm the matching `*_payload_*.txt` exists, and require `transport.format` to equal
+`tar+gzip+base64`. Save the embedded encoded-payload extractor from this prompt once as
+`<root>/extract_ai_context.py`, record its SHA-256, and reuse it unchanged.
 
-1. Resolve the newest manifest by parsed `created_at_utc`, not filename order. Confirm every manifest-named bundle exists. Do not reinterpret an incomplete full manifest as a partial snapshot.
-2. Save the embedded extractor below once as `<root>/extract_ai_context.py`, record its SHA-256, and reuse it unchanged. A home-directory copy is optional; neither location promises persistence after runtime destruction. Do not install packages.
-3. Run it with the exact manifest path and a unique immutable package directory:
+Run it with exact paths:
 
 ```bash
-python3 extract_ai_context.py --manifest '<exact-manifest-path>' --output '.ai-context/packages/<manifest-identity>'
+python3 extract_ai_context.py --manifest '<exact-manifest-path>' --output '.ai-context/packages/<identity>'
 ```
 
-4. Require exit status 0, `status: success`, and a readable reconstruction report for whole-package success. Never treat a failed extractor's partial output as a successful package.
-5. Record omitted/skipped files as unavailable. They block only decisions or edits that actually require them. Optional logs, samples, or generated evidence must not block unrelated verified source work.
-6. Record the actual SHA-256 and size of each installed source body. Preserve terminal-newline state. The extractor may select bytes by size while a different transport-normalized candidate matches the manifest hash. Record both hashes and the mismatch; never call them byte-equal.
-7. If a live-file blob hash is supplied, require the selected preimage to match it before editing that path. Otherwise label applicability as validated against the supplied byte representation, not the user's live tree.
+Require exit status 0, `status: success`, and a readable reconstruction report. The extractor must validate the
+payload bytes, Base64 body, decoded archive, safe member types and paths, complete manifest path set, and every
+reconstructed file's size and SHA-256. Never edit or reason from the Base64 body, a partially decoded archive, or a
+failed extraction directory.
 
-### Isolated extraction failures
-
-Do not silently weaken validation, edit manifests, normalize source, or substitute a reduced extractor. Diagnose the precise failure: missing attachment/bundle, no manifest match, altered extractor, existing output, invalid path/chunk/boundary/hash/size, unwritable filesystem, or invocation that never executed. Retry once only after correcting the cause.
-
-If a file-local metadata error blocks whole-package extraction, an explicitly recorded per-file recovery is permitted using the embedded extractor's `blocks`, `safe`, and `pick` functions, not a new parser:
-
-- Validate the complete named bundle set, path set, duplicate detection, and chunk sequence before recovering any path.
-- Reassemble each path independently; quarantine failing paths. Do not claim whole-package success.
-- Accept valid empty files when manifest size is zero and the empty-body hash matches; do not invent an initializer because a file tree lists one.
-- Record recovered paths, failed paths, actual hashes, manifest hashes, normalization mismatches, and recovery method in a separate report.
-- Use only complete independently validated source bodies. Hash-matching text with an inconsistent size may be used as labelled read-only evidence, never silently promoted to an editable preimage.
-- Continue all work supported by validated source; request only failing paths materially needed for the task. Structural corruption that prevents reliable path/chunk validation blocks the affected package.
-
-### Embedded extractor
-
-```python
-#!/usr/bin/env python3
-# No install needed: Python 3.10+ standard library only.
-# Attach: baic_prompt.md, *_manifest_*.json, and *_bundle_001_*.txt (plus *_bundle_002_*.txt, etc. when named by the manifest).
-# The * is the generated project/timestamp portion, for example *_manifest_20260822T083415Z.json.
-# Project-prefixed manifests also work:
-#   python3 extract_ai_context.py --manifest '*_manifest_*.json' --output reconstructed-context
-# Replace only a prior reconstruction of the same package:
-#   python3 extract_ai_context.py --manifest '*_manifest_*.json' --output reconstructed-context --force
-"""Validate and reconstruct build-ai-context manifest/bundle attachments."""
-import argparse, glob, hashlib, json, re, shutil, sys, tempfile
-from pathlib import Path, PurePosixPath
-
-SEP = "=" * 60
-BEGIN = re.compile(r"^===== BEGIN FILE: (.+) =====$")
-END = re.compile(r"^===== END FILE: (.+) \(chunk (\d+)/(\d+)\) =====$")
-
-
-def fail(message):
-    raise ValueError(message)
-
-
-def safe(name):
-    p = PurePosixPath(name)
-    if not name or "\\" in name or p.is_absolute() or any(x in ("", ".", "..") for x in p.parts):
-        fail(f"unsafe path: {name!r}")
-    return p
-
-
-def choose_manifest(pattern):
-    candidate = Path(pattern).expanduser()
-    matches = [candidate] if candidate.is_file() else [Path(x) for x in glob.glob(str(candidate))]
-    if not matches:
-        fail(f"no manifest matches {pattern!r}")
-    parsed = []
-    for p in matches:
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            parsed.append((data.get("created_at_utc", ""), p.stat().st_mtime_ns, p, data))
-        except Exception:
-            pass
-    if not parsed:
-        fail("no matching manifest is valid UTF-8 JSON")
-    _, _, path, data = max(parsed)
-    return path, data
-
-
-def blocks(bundle, tree_path):
-    lines = bundle.read_bytes().splitlines(keepends=True)
-    out, i = [], 0
-    for i, line in enumerate(lines):
-        if line.rstrip(b"\r\n").decode() == "===== FILETREE: Project Structure =====":
-            start = i + 2
-            for j in range(start, len(lines) - 1):
-                if lines[j].rstrip(b"\r\n").decode() == SEP and lines[j + 1].rstrip(b"\r\n").decode() == "===== END FILETREE =====":
-                    out.append((tree_path, 1, 1, b"".join(lines[start:j])))
-                    break
-            else:
-                fail(f"{bundle.name}: incomplete FILETREE wrapper")
-            break
-    i = 0
-    while i < len(lines):
-        m = BEGIN.fullmatch(lines[i].rstrip(b"\r\n").decode())
-        if not m:
-            i += 1
-            continue
-        name, meta, i = m.group(1), {}, i + 1
-        safe(name)
-        while i < len(lines) and lines[i].rstrip(b"\r\n").decode() != SEP:
-            text = lines[i].rstrip(b"\r\n").decode()
-            if text.startswith("# ") and " : " in text:
-                key, value = text[2:].split(" : ", 1); meta[key] = value
-            i += 1
-        if i >= len(lines) or "chunk" not in meta:
-            fail(f"{bundle.name}: incomplete metadata for {name}")
-        index, count = map(int, meta["chunk"].split("/")); start = i + 1; i = start
-        while i + 1 < len(lines):
-            if lines[i].rstrip(b"\r\n").decode() == SEP:
-                end = END.fullmatch(lines[i + 1].rstrip(b"\r\n").decode())
-                if end:
-                    if (end.group(1), int(end.group(2)), int(end.group(3))) != (name, index, count):
-                        fail(f"{bundle.name}: mismatched END FILE for {name}")
-                    out.append((name, index, count, b"".join(lines[start:i]))); i += 2; break
-            i += 1
-        else:
-            fail(f"{bundle.name}: missing END FILE for {name}")
-    return out
-
-
-def pick(parts, entry):
-    raw = b"".join(parts)
-    stripped = b"".join(x[:-2] if x.endswith(b"\r\n") else x[:-1] if x.endswith((b"\n", b"\r")) else x for x in parts)
-    final = raw[:-2] if raw.endswith(b"\r\n") else raw[:-1] if raw.endswith((b"\n", b"\r")) else raw
-    candidates = dict.fromkeys((stripped, raw, final))
-    wanted_hash, wanted_size = entry.get("sha256", ""), entry["size_bytes"]
-    sized = [data for data in candidates if len(data) == wanted_size]
-    if len(sized) == 1:
-        data = sized[0]
-        if wanted_hash and hashlib.sha256(data).hexdigest() != wanted_hash:
-            hash_matches = [
-                candidate
-                for candidate in candidates
-                if hashlib.sha256(candidate).hexdigest() == wanted_hash
-            ]
-            if len(hash_matches) != 1:
-                fail(f"{entry['path']}: size-selected bytes and manifest SHA-256 are inconsistent")
-        return data
-    fail(f"{entry['path']}: expected size {wanted_size} does not select one candidate")
-
-
-def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--manifest", default="*_manifest_*.json")
-    ap.add_argument("--output", default="reconstructed-context")
-    ap.add_argument("--force", action="store_true")
-    args = ap.parse_args()
-    manifest_path, manifest = choose_manifest(args.manifest)
-    skipped_during_pack = manifest.get("skipped_during_pack") or []
-    expected, chunks = {}, {}
-    for record in manifest.get("bundles", []):
-        bundle = manifest_path.parent / record["bundle"]
-        if not bundle.is_file(): fail(f"missing bundle: {bundle.name}")
-        trees = [x["path"] for x in record["files"] if x.get("category") == "filetree"]
-        for entry in record["files"]:
-            name = entry["path"]; safe(name)
-            if name in expected and entry["chunk_index"] in expected[name]: fail(f"duplicate manifest chunk: {name}")
-            expected.setdefault(name, {})[entry["chunk_index"]] = entry
-        for name, index, count, body in blocks(bundle, trees[0] if trees else None):
-            if name is None: fail(f"{bundle.name}: unmanifested FILETREE")
-            if index in chunks.setdefault(name, {}): fail(f"duplicate bundle chunk: {name} {index}")
-            chunks[name][index] = (count, body)
-    if set(chunks) != set(expected): fail(f"path-set mismatch; missing={sorted(set(expected)-set(chunks))}; extra={sorted(set(chunks)-set(expected))}")
-    files = {}
-    for name, entries in expected.items():
-        indexes = sorted(entries); found = sorted(chunks[name]); count = entries[indexes[0]]["chunk_count"]
-        if indexes != found or indexes != list(range(1, count + 1)): fail(f"incomplete chunks for {name}")
-        entry = entries[indexes[0]]; data = pick([chunks[name][i][1] for i in indexes], entry)
-        if not entry.get("sha256") and len(data) != entry["size_bytes"]: fail(f"size mismatch for {name}")
-        if name in manifest["selected_files"] and not data: fail(f"empty selected file: {name}")
-        files[name] = data
-    output = Path(args.output).resolve()
-    if output.exists() and not args.force: fail(f"output exists; use --force to replace: {output}")
-    stage = Path(tempfile.mkdtemp(prefix=f".{output.name}.stage-", dir=output.parent))
-    try:
-        for name, data in files.items():
-            target = stage.joinpath(*safe(name).parts); target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(data)
-        if output.exists(): shutil.rmtree(output)
-        stage.replace(output)
-    finally:
-        if stage.exists(): shutil.rmtree(stage)
-    report = {"status": "success", "manifest": manifest_path.name, "bundles": [x["bundle"] for x in manifest["bundles"]], "output": str(output), "selected_files": len(manifest["selected_files"]), "restored_entries": len(files), "sha256_checked": sum(bool(e[min(e)].get("sha256")) for e in expected.values()), "manifest_size_mismatches": sum(len(files[n]) != e[sorted(e)[0]]["size_bytes"] for n, e in expected.items()), "skipped_during_pack": skipped_during_pack}
-    (output / "RECONSTRUCTION_REPORT.json").write_text(json.dumps(report, indent=2) + "\n")
-    print(json.dumps(report, indent=2))
-
-
-if __name__ == "__main__":
-    try: main()
-    except Exception as exc:
-        print(json.dumps({"status": "failed", "error": str(exc)}), file=sys.stderr); raise SystemExit(2)
-
-```
+Record omitted or skipped source as unavailable. It blocks only decisions or edits that actually require it. If the
+payload, archive, or any entry fails validation, diagnose the exact layer once and request the smallest exact
+replacement attachment needed. Do not weaken Base64 validation, archive hashes, path checks, or per-file integrity.
 
 ## 5. One cumulative baseline and patch continuity
 
@@ -408,18 +278,27 @@ For UI changes, cover relevant loading, empty, error, disabled, focus, hover, ov
 
 ## 8. Validation: decisive, bounded, and honest
 
-Select checks by the actual failure modes, not by a desire to produce a large test report.
+Validate the failure modes that could make the requested result incorrect. Validation is a falsification step, not
+a ritual and not a substitute for implementation.
 
-1. Inspect the affected seams and run the nearest existing checks when they establish a useful baseline. Do not run the full baseline suite automatically.
-2. Implement the fix and focused regression coverage for the principal bug and material edge cases. Do not add a test for every trivial helper merely to increase test count.
-3. Run targeted tests/type checks/lint/build/integration checks needed to falsify the main risks. Cross-seam changes require representative integration validation, not just parsing.
-4. Run a broader suite once when shared behavior, breadth, or targeted findings justify it. After failures, rerun affected checks; rerun the broader suite only when the correction invalidates its previous result.
-5. Stop validation when acceptance criteria and principal risks have sufficient evidence. Do not repeatedly rerun unchanged tests, duplicate equivalent checks, or install unrelated tools.
-6. Inspect final diffs for unrelated edits, broken references, placeholders, secrets, incomplete wiring, and scope drift.
+1. Establish a baseline only when it helps distinguish existing failures from regressions.
+2. Run the nearest focused checks for changed behavior and material edge cases.
+3. For cross-seam changes, run one representative integration check covering the affected boundary.
+4. Run a broader suite once only when shared behavior, change breadth, or focused findings justify it.
+5. After a failure, correct the cause and rerun the affected check. Do not rerun unchanged successful checks or an
+   unchanged broad suite without a concrete reason.
+6. Stop when acceptance criteria and principal risks have sufficient independent evidence.
+7. Inspect final diffs and artifacts once for unintended edits, broken references, placeholders, secrets, missing
+   wiring, path errors, and scope drift.
 
-Do not skip necessary safety or integration checks to meet an arbitrary time quota. Do not claim sandbox tests prove emulator, browser, network, production, or live-tree behavior. State unavailable checks briefly. Optional environment-dependent checks may remain unperformed without blocking a verified artifact; failures affecting requested correctness must be fixed or explicitly block that scope.
+Prefer the cheapest check that can decisively falsify each material risk, while using stronger checks where failure
+would be costly. Do not skip security, data-integrity, migration, or integration validation merely to save time. Do
+not claim sandbox checks prove device, browser, network, production, or live-tree behavior. State unavailable checks
+briefly and continue when they are not required for correctness.
 
-Keep detailed logs internal by default. Create a downloadable validation report only when requested or genuinely needed for continuation. The patch artifact must not be delayed to polish reports.
+Keep detailed logs internal unless requested or needed for continuation. Do not create or polish a validation report
+when the requested implementation artifact is ready. Never report a check as passed unless it ran in the current
+session and its result was inspected.
 
 ## 9. Artifact generation and verification
 

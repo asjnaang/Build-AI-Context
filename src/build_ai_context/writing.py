@@ -30,15 +30,42 @@ from build_ai_context.models import FileChunk, SourceFile
 
 _TEXT_PROMPT_PATH = Path(__file__).parent / "baic_prompt_text.md"
 _ENCODED_PROMPT_PATH = Path(__file__).parent / "baic_prompt_gzip.md"
+_PROMPT_PATHS = {
+    "text": _TEXT_PROMPT_PATH,
+    "tar-gz": _ENCODED_PROMPT_PATH,
+}
+_PROMPT_OUTPUT_NAMES = {
+    "text": "baic_prompt_text.md",
+    "tar-gz": "baic_prompt_gzip.md",
+}
 _BAIC_PROMPT_MD_PATH = _TEXT_PROMPT_PATH
 _TASK_PLACEHOLDER = "[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]"
 
 
-def get_baic_prompt_md_content(task: Optional[str] = None) -> str:
-    """Return the bundled prompt, optionally replacing its task placeholder."""
-    if not _BAIC_PROMPT_MD_PATH.exists():
+def prompt_path_for_transport(transport: str) -> Path:
+    """Return the packaged prompt matching the selected transport."""
+    try:
+        return _PROMPT_PATHS[transport]
+    except KeyError as exc:
+        raise ValueError("transport must be 'tar-gz' or 'text'") from exc
+
+
+def prompt_output_name_for_transport(transport: str) -> str:
+    """Return the generated prompt filename matching the selected transport."""
+    try:
+        return _PROMPT_OUTPUT_NAMES[transport]
+    except KeyError as exc:
+        raise ValueError("transport must be 'tar-gz' or 'text'") from exc
+
+
+def get_baic_prompt_md_content(
+    task: Optional[str] = None, transport: str = "text"
+) -> str:
+    """Return the transport-specific prompt with an optional task replacement."""
+    prompt_path = prompt_path_for_transport(transport)
+    if not prompt_path.exists():
         return ""
-    content = _BAIC_PROMPT_MD_PATH.read_text(encoding="utf-8")
+    content = prompt_path.read_text(encoding="utf-8")
     if task is None:
         return content
     return content.replace(_TASK_PLACEHOLDER, task, 1)
@@ -265,12 +292,11 @@ def write_bundles_and_manifest(
             timestamp = generate_timestamp()
 
     # Select the transport-specific prompt, both based on the v2 contract.
-    prompt_path = _ENCODED_PROMPT_PATH if transport == "tar-gz" else _TEXT_PROMPT_PATH
+    prompt_path = prompt_path_for_transport(transport)
     if not prompt_path.is_file():
         raise FileNotFoundError(f"Bundled prompt is missing: {prompt_path}")
-    prompt_content = prompt_path.read_text(encoding="utf-8")
-    if task is not None:
-        prompt_content = prompt_content.replace(_TASK_PLACEHOLDER, task, 1)
+    prompt_content = get_baic_prompt_md_content(task=task, transport=transport)
+    prompt_output_name = prompt_output_name_for_transport(transport)
 
     # Filetree content for the first bundle
     if filetree_content is None and filetree_name:
@@ -279,7 +305,7 @@ def write_bundles_and_manifest(
             filetree_content = filetree_path.read_text(encoding="utf-8")
 
     # Expose one prompt whose extractor matches the selected transport.
-    (output_dir / "baic_prompt.md").write_text(prompt_content, encoding="utf-8")
+    (output_dir / prompt_output_name).write_text(prompt_content, encoding="utf-8")
     if transport == "tar-gz":
         included_paths: Set[str] = {
             chunk.rel_path.as_posix() for bundle in bundles for chunk in bundle

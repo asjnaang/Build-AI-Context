@@ -144,7 +144,7 @@ def test_task_flag_replaces_generated_prompt_placeholder(tmp_path):
     result, _, _ = run_exporter(args, None)
 
     assert result == 0
-    prompt = (output / "baic_prompt.md").read_text()
+    prompt = (output / "baic_prompt_text.md").read_text()
     assert task in prompt
     assert "[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]" not in prompt
     assert f"## Task\n\n```text\n{task}\n```" in prompt
@@ -162,7 +162,7 @@ def test_generated_prompt_keeps_placeholder_without_task(tmp_path):
     result, _, _ = run_exporter(args, None)
 
     assert result == 0
-    prompt = (output / "baic_prompt.md").read_text()
+    prompt = (output / "baic_prompt_text.md").read_text()
     assert "[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]" in prompt
 
 
@@ -183,7 +183,7 @@ Do not reinterpret $HOME, *.json, or `commands`.
     monkeypatch.setattr("build_ai_context.cli.subprocess.run", lambda *args, **kwargs: completed)
     result, _, _ = run_exporter(args, None)
     assert result == 0
-    assert task in (output / "baic_prompt.md").read_text()
+    assert task in (output / "baic_prompt_text.md").read_text()
 
 
 def test_task_clipboard_long_option_is_supported():
@@ -490,3 +490,21 @@ def test_cli_exclusions_can_remove_every_selected_file(tmp_path):
 def test_transport_defaults_to_text_and_supports_tar_gz():
     assert build_parser().parse_args([]).transport == "text"
     assert build_parser().parse_args(["--transport", "text"]).transport == "text"
+
+
+def test_tar_gz_task_uses_gzip_prompt_name(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("print('hello')\n")
+    output = tmp_path / "output"
+    task = "Inspect the compressed package."
+    args = build_parser().parse_args([
+        str(project), "--transport", "tar-gz", "--all",
+        "--output-dir", str(output), "--task", task,
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    assert task in (output / "baic_prompt_gzip.md").read_text()
+    assert not (output / "baic_prompt_text.md").exists()
