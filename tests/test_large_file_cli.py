@@ -75,7 +75,7 @@ def test_manifest_separates_included_warnings_from_actual_skips(tmp_path):
     skipped_file.write_text("\n".join(f"line_{index}" for index in range(3001)))
     output = tmp_path / "output"
     args = build_parser().parse_args(
-        [str(project), "--all", "--output-dir", str(output)]
+        [str(project), "--transport", "text", "--all", "--output-dir", str(output)]
     )
 
     result, _, _ = run_exporter(args, None)
@@ -100,7 +100,7 @@ def test_interactive_export_can_force_include_oversized_file(tmp_path, monkeypat
     oversized.write_text("\n".join(f"line_{index}" for index in range(3001)))
     output = tmp_path / "output"
     args = build_parser().parse_args(
-        [str(project), "--output-dir", str(output)]
+        [str(project), "--transport", "text", "--output-dir", str(output)]
     )
 
     def select_all(_exporter, files, _root):
@@ -138,16 +138,16 @@ def test_task_flag_replaces_generated_prompt_placeholder(tmp_path):
     output = tmp_path / "output"
     task = "Go through these files and fix the issues we discussed before."
     args = build_parser().parse_args(
-        [str(project), "--all", "--output-dir", str(output), "--task", task]
+        [str(project), "--transport", "text", "--all", "--output-dir", str(output), "--task", task]
     )
 
     result, _, _ = run_exporter(args, None)
 
     assert result == 0
-    prompt = (output / "baic_prompt.md").read_text()
+    prompt = (output / "baic_prompt_text.md").read_text()
     assert task in prompt
     assert "[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]" not in prompt
-    assert f"## Task Contract\n\n```\n{task}\n```" in prompt
+    assert f"## Task\n\n```text\n{task}\n```" in prompt
 
 
 def test_generated_prompt_keeps_placeholder_without_task(tmp_path):
@@ -156,13 +156,13 @@ def test_generated_prompt_keeps_placeholder_without_task(tmp_path):
     (project / "app.py").write_text("print('hello')\n")
     output = tmp_path / "output"
     args = build_parser().parse_args(
-        [str(project), "--all", "--output-dir", str(output)]
+        [str(project), "--transport", "text", "--all", "--output-dir", str(output)]
     )
 
     result, _, _ = run_exporter(args, None)
 
     assert result == 0
-    prompt = (output / "baic_prompt.md").read_text()
+    prompt = (output / "baic_prompt_text.md").read_text()
     assert "[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]" in prompt
 
 
@@ -177,13 +177,13 @@ def test_task_clipboard_alias_reads_pbpaste_and_updates_prompt(tmp_path, monkeyp
 Do not reinterpret $HOME, *.json, or `commands`.
 """
     args = build_parser().parse_args(
-        [str(project), "--all", "--output-dir", str(output), "--tc"]
+        [str(project), "--transport", "text", "--all", "--output-dir", str(output), "--tc"]
     )
     completed = __import__("subprocess").CompletedProcess(["pbpaste"], 0, task, "")
     monkeypatch.setattr("build_ai_context.cli.subprocess.run", lambda *args, **kwargs: completed)
     result, _, _ = run_exporter(args, None)
     assert result == 0
-    assert task in (output / "baic_prompt.md").read_text()
+    assert task in (output / "baic_prompt_text.md").read_text()
 
 
 def test_task_clipboard_long_option_is_supported():
@@ -230,6 +230,7 @@ def test_multiple_comma_terminated_path_arguments_are_normalized(tmp_path):
     args = build_parser().parse_args(
         [
             str(project),
+            "--transport", "text",
             "--non-interactive",
             "--output-dir",
             str(output),
@@ -308,7 +309,7 @@ def test_force_bundle_samples_json_without_modifying_source(tmp_path):
     source.write_text(original)
     output = tmp_path / "output"
     args = build_parser().parse_args([
-        str(project), "--all", "--output-dir", str(output),
+        str(project), "--transport", "text", "--all", "--output-dir", str(output),
         "--max-file-lines", "100", "--force-bundle",
     ])
     result, _, _ = run_exporter(args, None)
@@ -334,7 +335,7 @@ def test_force_bundle_preserves_array_shapes(tmp_path):
     ]}, indent=2))
     output = tmp_path / "output"
     args = build_parser().parse_args([
-        str(project), "--all", "--output-dir", str(output),
+        str(project), "--transport", "text", "--all", "--output-dir", str(output),
         "--max-file-lines", "50", "--force-bundle",
     ])
     result, _, _ = run_exporter(args, None)
@@ -350,7 +351,7 @@ def test_force_bundle_includes_invalid_json_without_line_limit(tmp_path):
     (project / "invalid.json").write_text("{\n" + "not-json\n" * 20 + "}")
     output = tmp_path / "output"
     args = build_parser().parse_args([
-        str(project), "--all", "--output-dir", str(output),
+        str(project), "--transport", "text", "--all", "--output-dir", str(output),
         "--max-file-lines", "10", "--force-bundle",
     ])
     result, _, _ = run_exporter(args, None)
@@ -370,7 +371,7 @@ def test_force_bundle_includes_oversized_non_json_without_max_lines_override(tmp
     source.write_text("\n".join(f"line_{index}" for index in range(3500)))
     output = tmp_path / "output"
     args = build_parser().parse_args([
-        str(project), "--all", "--output-dir", str(output), "--force-bundle",
+        str(project), "--transport", "text", "--all", "--output-dir", str(output), "--force-bundle",
     ])
 
     result, _, _ = run_exporter(args, None)
@@ -456,7 +457,7 @@ def test_cli_exclusions_apply_after_path_selection_and_are_recorded(tmp_path):
         path.write_text(f"# {path.name}\n")
     output = tmp_path / "output"
     args = build_parser().parse_args([
-        str(project), "--non-interactive", "--paths", "src", "tests",
+        str(project), "--transport", "text", "--non-interactive", "--paths", "src", "tests",
         "--exclude-paths", "src/generated", "--exclude-formats", "json",
         "--output-dir", str(output),
     ])
@@ -479,8 +480,31 @@ def test_cli_exclusions_can_remove_every_selected_file(tmp_path):
     (project / "only.py").write_text("print('hello')\n")
     output = tmp_path / "output"
     args = build_parser().parse_args([
-        str(project), "--all", "--exclude-formats", "py", "--output-dir", str(output)
+        str(project), "--transport", "text", "--all", "--exclude-formats", "py", "--output-dir", str(output)
     ])
     result, _, _ = run_exporter(args, None)
     assert result == 0
     assert not output.exists()
+
+
+def test_transport_defaults_to_text_and_supports_tar_gz():
+    assert build_parser().parse_args([]).transport == "text"
+    assert build_parser().parse_args(["--transport", "text"]).transport == "text"
+
+
+def test_tar_gz_task_uses_gzip_prompt_name(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("print('hello')\n")
+    output = tmp_path / "output"
+    task = "Inspect the compressed package."
+    args = build_parser().parse_args([
+        str(project), "--transport", "tar-gz", "--all",
+        "--output-dir", str(output), "--task", task,
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    assert task in (output / "baic_prompt_gzip.md").read_text()
+    assert not (output / "baic_prompt_text.md").exists()
