@@ -147,7 +147,7 @@ def test_task_flag_replaces_generated_prompt_placeholder(tmp_path):
     prompt = (output / "baic_prompt.md").read_text()
     assert task in prompt
     assert "[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]" not in prompt
-    assert f"## Task Contract\n\n```\n{task}\n```" in prompt
+    assert f"## Task\n\n```text\n{task}\n```" in prompt
 
 
 def test_generated_prompt_keeps_placeholder_without_task(tmp_path):
@@ -487,6 +487,6 @@ def test_cli_exclusions_can_remove_every_selected_file(tmp_path):
     assert not output.exists()
 
 
-def test_transport_defaults_to_tar_gz_and_supports_text():
-    assert build_parser().parse_args([]).transport == "tar-gz"
+def test_transport_defaults_to_text_and_supports_tar_gz():
+    assert build_parser().parse_args([]).transport == "text"
     assert build_parser().parse_args(["--transport", "text"]).transport == "text"

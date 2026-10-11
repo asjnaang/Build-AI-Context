@@ -78,10 +78,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transport",
         choices=["tar-gz", "text"],
-        default="tar-gz",
+        default="text",
         help=(
-            "Context transport (default: tar-gz). tar-gz creates one exact-byte archive, "
-            "one external manifest, and the generated prompt; text retains legacy bundles."
+            "Context transport (default: text). text creates readable framed bundles; "
+            "tar-gz creates one Base64 text payload containing a deterministic tar.gz archive."
         ),
     )
     parser.add_argument(
@@ -309,7 +309,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
     try:
         task = resolve_task_content(args)
         if args.transport == "tar-gz" and getattr(args, "redact", False):
-            raise ValueError("--redact requires --transport text; tar-gz preserves exact source bytes")
+            raise ValueError("--redact requires --transport text")
         root = Path(args.project_root).expanduser().resolve()
         if not root.exists():
             print(f"Error: Project root does not exist: {root}", file=sys.stderr)
@@ -511,7 +511,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             print(
                 f"\n📝 Open 'baic_prompt.md' in the output directory and replace the task description "
                 f"(under ## Task Contract) with your specific feature request or question or changes needed.\n"
-                f"Then upload the tar.gz archive, manifest JSON, and baic_prompt.md and ask your AI assistant address the promt.md "
+                f"Then upload the generated text bundle or payload, manifest JSON, and baic_prompt.md and ask your AI assistant address the promt.md "
                 f"for best results.\n\n"
             )
 

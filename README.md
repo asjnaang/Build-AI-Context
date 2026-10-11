@@ -1,6 +1,6 @@
 # build-ai-context
 
-Export selected source and project files as a deterministic tar.gz context package with a compact manifest and agent prompt. Perfect for feeding your codebase to AI assistants like Claude, GPT-4, Copilot, or any LLM.
+Export selected source and project files as readable text bundles or a Base64-encoded compressed text payload with a compact manifest and agent prompt. Perfect for feeding your codebase to AI assistants like Claude, GPT-4, Copilot, or any LLM.
 
 **Commands:** `build-ai-context` or `baic` (short alias)
 
@@ -112,7 +112,7 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `--max-file-lines` | Skip repo source files with ≥ N lines when bundling (default: 3000; `0` = no limit). Bundle output size stays fixed at 8000 lines. | `--max-file-lines 10000` |
 | `--force-ignored` | Include supported files under explicit `--paths` even when ignored; secret-like files still require `--include-secret-files` | `--paths .gen_files/reports --force-ignored` |
 | `--force-bundle` | Bundle selected files regardless of the per-file line limit; oversized JSON is sampled when possible | `--paths reports --force-bundle` |
-| `--transport` | `tar-gz` (default) or legacy `text` bundles | `--transport text` |
+| `--transport` | `text` (default) or compressed `tar-gz` Base64 text payload | `--transport text` |
 | `--output-dir` | Custom output folder | `--output-dir ./my-bundles` |
 | `--project-overview` | Generate architecture overview | `--project-overview` |
 | `--include-secret-files` | Include .env, keys, etc. (careful!) | `--include-secret-files` |
@@ -142,23 +142,27 @@ Shortcuts you can use: `py`→`python`, `ts`→`typescript`, `js`→`javascript`
 
 ## Output Files
 
-The default `tar-gz` transport is designed for AI agents limited to three attachments:
+The default `text` transport preserves the existing behavior and commands: BAIC writes readable, framed
+`*_bundle_*.txt` files capped at 8000 rendered lines, one manifest JSON, and a matching `baic_prompt.md`.
 
-1. `<project>_context_<timestamp>.tar.gz` containing exact selected source bytes.
-2. `<project>_manifest_<timestamp>.json` containing archive and per-file SHA-256 values.
-3. `baic_prompt.md` containing extraction, validation, and task instructions.
+Use `--transport tar-gz` when attachment count matters. BAIC deterministically TARs and Gzip-compresses the
+selected exact source bytes, Base64-encodes the archive, and writes one `*_payload_*.txt` attachment instead of
+a binary archive. The output is one payload text file, one manifest JSON, and a transport-specific
+`baic_prompt.md`. The manifest validates the payload, Base64 body, decoded archive, and every source entry.
 
-`baic_prompt_6_v2.md` is also written to the output directory, and both prompt variants are duplicated under
-`.ai-context/prompts/` inside the archive. The file tree is stored under `.ai-context/` inside the archive.
-Existing nested `.gz` files are preserved byte-for-byte and need no Base64 conversion.
+Examples:
 
-The archive is deterministic: repository-relative paths are sorted, ownership and timestamps are normalized,
-and the gzip timestamp is zero. The manifest records the archive size/SHA-256 and each included source file's
-original size/SHA-256. Use `--transport text` only for agents that cannot extract tar.gz attachments; that
-legacy mode retains framed text bundles and Base64 transport for binary gzip files.
+```bash
+# Existing commands remain readable text bundles.
+baic . --all
+baic . --non-interactive --paths src tests
 
-`--redact` is intentionally restricted to `--transport text`, because rewriting exact source bytes inside the
-archive would invalidate source hashes and prevent reliable patch preimages.
+# One compressed text payload for agents that reject binary archive attachments.
+baic . --all --transport tar-gz
+```
+
+Redaction remains available with the default `text` transport; `--redact` cannot be combined with `--transport tar-gz` because compressed transport preserves exact selected bytes. `tar-gz` is an internal archive representation;
+no `.tar.gz`, `.gz`, or `.zip` attachment remains in the generated output directory.
 
 ## Filetree Feature
 
@@ -373,7 +377,7 @@ baic
 ## Using with AI Assistants
 
 1. **Run the exporter**: `baic . --categories python`
-2. **Upload the archive**: Attach the generated `.tar.gz`.
+2. **Upload the generated text**: Attach readable bundle files, or the single payload text file produced by `--transport tar-gz`.
 3. **Upload the manifest and prompt**: Attach the matching manifest JSON and `baic_prompt.md`.
 4. **Ask away**: The AI validates and extracts exact repository files before working.
 
