@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "build-ai-context"
-version = "1.0.18-dev06"
-description = "Package source files for AI agents as deterministic tar.gz or text bundles"
+version = "1.0.19"
+description = "Package source files for AI agents as readable or compressed text bundles"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"

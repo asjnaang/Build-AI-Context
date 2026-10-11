@@ -28,11 +28,9 @@ from build_ai_context.constants import (
 )
 from build_ai_context.models import FileChunk, SourceFile
 
-_PROMPT_PATHS = (
-    Path(__file__).parent / "baic_prompt.md",
-    Path(__file__).parent / "baic_prompt_6_v2.md",
-)
-_BAIC_PROMPT_MD_PATH = _PROMPT_PATHS[0]
+_TEXT_PROMPT_PATH = Path(__file__).parent / "baic_prompt.md"
+_ENCODED_PROMPT_PATH = Path(__file__).parent / "baic_prompt_6_v2.md"
+_BAIC_PROMPT_MD_PATH = _TEXT_PROMPT_PATH
 _TASK_PLACEHOLDER = "[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]"
 
 
@@ -266,8 +264,13 @@ def write_bundles_and_manifest(
         else:
             timestamp = generate_timestamp()
 
-    # Prepare the generated prompt and copy both supported prompt variants.
-    prompt_content = get_baic_prompt_md_content(task)
+    # Select the transport-specific prompt, both based on the v2 contract.
+    prompt_path = _ENCODED_PROMPT_PATH if transport == "tar-gz" else _TEXT_PROMPT_PATH
+    if not prompt_path.is_file():
+        raise FileNotFoundError(f"Bundled prompt is missing: {prompt_path}")
+    prompt_content = prompt_path.read_text(encoding="utf-8")
+    if task is not None:
+        prompt_content = prompt_content.replace(_TASK_PLACEHOLDER, task, 1)
 
     # Filetree content for the first bundle
     if filetree_content is None and filetree_name:
@@ -275,14 +278,8 @@ def write_bundles_and_manifest(
         if filetree_path.exists():
             filetree_content = filetree_path.read_text(encoding="utf-8")
 
-    # Write both agent prompts into every generated output directory.
-    for prompt_path in _PROMPT_PATHS:
-        if not prompt_path.is_file():
-            raise FileNotFoundError(f"Bundled prompt is missing: {prompt_path}")
-        content = prompt_content if prompt_path == _BAIC_PROMPT_MD_PATH else prompt_path.read_text(encoding="utf-8")
-        (output_dir / prompt_path.name).write_text(content, encoding="utf-8")
-
-        (output_dir / prompt_path.name).write_text(content, encoding="utf-8")
+    # Expose one prompt whose extractor matches the selected transport.
+    (output_dir / "baic_prompt.md").write_text(prompt_content, encoding="utf-8")
     if transport == "tar-gz":
         included_paths: Set[str] = {
             chunk.rel_path.as_posix() for bundle in bundles for chunk in bundle
@@ -306,21 +303,28 @@ def write_bundles_and_manifest(
                         info.uid = info.gid = 0
                         info.uname = info.gname = ""
                         archive.addfile(info, io.BytesIO(data))
-                    if filetree_content is not None and filetree_name:
-                        data = filetree_content.encode("utf-8")
-                        info = tarfile.TarInfo(f".ai-context/{filetree_name}")
-                        info.size = len(data)
-                        info.mode = 0o644
-                        info.mtime = 0
-                        archive.addfile(info, io.BytesIO(data))
-                    for prompt_path in _PROMPT_PATHS:
-                        data = (output_dir / prompt_path.name).read_bytes()
-                        info = tarfile.TarInfo(f".ai-context/prompts/{prompt_path.name}")
-                        info.size = len(data)
-                        info.mode = 0o644
-                        info.mtime = 0
-                        archive.addfile(info, io.BytesIO(data))
         archive_bytes = archive_path.read_bytes()
+        payload_body = __import__("base64").b64encode(archive_bytes).decode("ascii")
+        wrapped_body = "\n".join(
+            payload_body[index:index + 76]
+            for index in range(0, len(payload_body), 76)
+        )
+        payload_name = f"{folder_name}_payload_{timestamp}.txt"
+        payload_header = (
+            "BAIC-ENCODED-CONTEXT-V1\n"
+            f"archive-name: {archive_name}\n"
+            "content-format: tar+gzip\n"
+            "transport-encoding: base64\n"
+            f"archive-size-bytes: {len(archive_bytes)}\n"
+            f"archive-sha256: {hashlib.sha256(archive_bytes).hexdigest()}\n"
+            f"base64-body-size-bytes: {len(payload_body.encode('ascii'))}\n"
+            f"base64-body-sha256: {hashlib.sha256(payload_body.encode('ascii')).hexdigest()}\n"
+            "\n"
+        )
+        payload_path = output_dir / payload_name
+        payload_path.write_text(payload_header + wrapped_body + "\n", encoding="ascii")
+        payload_bytes = payload_path.read_bytes()
+        archive_path.unlink()
         entries = [
             {
                 "path": source.rel_path.as_posix(),
@@ -348,10 +352,15 @@ def write_bundles_and_manifest(
                 "selected_total_bytes": sum(entry["size_bytes"] for entry in entries),
             },
             "transport": {
-                "format": "tar+gzip",
-                "archive": archive_name,
-                "size_bytes": len(archive_bytes),
-                "sha256": hashlib.sha256(archive_bytes).hexdigest(),
+                "format": "tar+gzip+base64",
+                "payload": payload_name,
+                "payload_size_bytes": len(payload_bytes),
+                "payload_sha256": hashlib.sha256(payload_bytes).hexdigest(),
+                "base64_body_size_bytes": len(payload_body.encode("ascii")),
+                "base64_body_sha256": hashlib.sha256(payload_body.encode("ascii")).hexdigest(),
+                "archive_name": archive_name,
+                "archive_size_bytes": len(archive_bytes),
+                "archive_sha256": hashlib.sha256(archive_bytes).hexdigest(),
                 "deterministic": True,
             },
             "archive_entries": entries,
