@@ -143,12 +143,12 @@ Shortcuts you can use: `py`→`python`, `ts`→`typescript`, `js`→`javascript`
 ## Output Files
 
 The default `text` transport preserves the existing behavior and commands: BAIC writes readable, framed
-`*_bundle_*.txt` files capped at 8000 rendered lines, one manifest JSON, and a matching `baic_prompt.md`.
+`*_bundle_*.txt` files capped at 8000 rendered lines, one manifest JSON, and `baic_prompt_text.md`.
 
 Use `--transport tar-gz` when attachment count matters. BAIC deterministically TARs and Gzip-compresses the
 selected exact source bytes, Base64-encodes the archive, and writes one `*_payload_*.txt` attachment instead of
-a binary archive. The output is one payload text file, one manifest JSON, and a transport-specific
-`baic_prompt.md`. The manifest validates the payload, Base64 body, decoded archive, and every source entry.
+a binary archive. The output is one payload text file, one manifest JSON, and `baic_prompt_gzip.md`. The
+manifest validates the payload, Base64 body, decoded archive, and every source entry.
 
 Examples:
 
@@ -334,8 +334,8 @@ baic . --non-interactive --paths src/components src/utils \
     --task "Review these files and fix the issues we discussed."
 ```
 
-The task replaces the placeholder under `## Task Contract` in the generated
-`baic_prompt.md`. Omit `--task` to keep the placeholder unchanged.
+The task replaces the placeholder under `## Task` in the generated transport-specific prompt:
+`baic_prompt_text.md` for `text`, or `baic_prompt_gzip.md` for `tar-gz`. Omit `--task` to keep the placeholder.
 
 For long multiline tasks, JSON, quotes, or other shell-sensitive content, copy the
 complete task and use `--tc` (or `--task-clipboard`). The CLI reads the clipboard
@@ -378,7 +378,7 @@ baic
 
 1. **Run the exporter**: `baic . --categories python`
 2. **Upload the generated text**: Attach readable bundle files, or the single payload text file produced by `--transport tar-gz`.
-3. **Upload the manifest and prompt**: Attach the matching manifest JSON and `baic_prompt.md`.
+3. **Upload the manifest and prompt**: Attach the manifest and the generated prompt matching the transport.
 4. **Ask away**: The AI validates and extracts exact repository files before working.
 
 Example prompt to AI:
@@ -419,7 +419,7 @@ options:
   --keywords KEYWORDS   Keywords to search in file content
   --exclude-paths PATHS Remove files/folders from the final selected set
   --exclude-formats EXT Remove extensions from the final selected set
-  --task TASK            Replace the Task Contract placeholder in baic_prompt.md
+  --task TASK            Replace the Task placeholder in the transport-specific prompt
   --task-clipboard, --tc Read the Task Contract from the macOS clipboard
   --include-secret-files Include secret-like files
   --project-overview    Generate PROJECT_OVERVIEW.txt

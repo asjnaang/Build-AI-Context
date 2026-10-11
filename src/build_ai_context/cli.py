@@ -134,7 +134,7 @@ def build_parser() -> argparse.ArgumentParser:
     task_group.add_argument(
         "--task",
         default=None,
-        help="Replace the Task Contract placeholder in the generated baic_prompt.md.",
+        help="Replace the Task placeholder in the generated transport-specific prompt.",
     )
     task_group.add_argument(
         "--task-clipboard",
@@ -507,12 +507,22 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             for entry in skipped_during_processing:
                 exporter.print_warning(f"  - {entry}")
 
-        if not args.non_interactive and not args.non_interactive:
+        if not args.non_interactive:
+            prompt_name = (
+                "baic_prompt_gzip.md"
+                if args.transport == "tar-gz"
+                else "baic_prompt_text.md"
+            )
+            package_name = (
+                "Base64 payload text file"
+                if args.transport == "tar-gz"
+                else "text bundle file(s)"
+            )
             print(
-                f"\n📝 Open 'baic_prompt.md' in the output directory and replace the task description "
-                f"(under ## Task Contract) with your specific feature request or question or changes needed.\n"
-                f"Then upload the generated text bundle or payload, manifest JSON, and baic_prompt.md and ask your AI assistant address the promt.md "
-                f"for best results.\n\n"
+                f"\n📝 Open '{prompt_name}' in the output directory and replace the "
+                f"description under ## Task if --task was not supplied.\n"
+                f"Upload the generated {package_name}, manifest JSON, and {prompt_name} "
+                f"to your AI assistant.\n\n"
             )
 
         return 0, all_files, skipped_reasons
