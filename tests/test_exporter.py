@@ -371,13 +371,12 @@ def test_gzip_manifest_records_base64_and_prompts_are_copied(tmp_path, monkeypat
     root.mkdir()
     archive = root / "history.json.gz"
     archive.write_bytes(gzip.compress(b'{"version":"1.4.0"}\n', mtime=0))
-    prompt = tmp_path / "baic_prompt.md"
+    prompt = tmp_path / "baic_prompt_text.md"
     prompt.write_text("Task: [PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]")
-    prompt_v2 = tmp_path / "baic_prompt_6_v2.md"
+    prompt_v2 = tmp_path / "baic_prompt_gzip.md"
     prompt_v2.write_text("Prompt v2")
-    monkeypatch.setattr(writing, "_TEXT_PROMPT_PATH", prompt)
-    monkeypatch.setattr(writing, "_ENCODED_PROMPT_PATH", prompt_v2)
-    monkeypatch.setattr(writing, "_BAIC_PROMPT_MD_PATH", prompt)
+    monkeypatch.setitem(writing._PROMPT_PATHS, "text", prompt)
+    monkeypatch.setitem(writing._PROMPT_PATHS, "tar-gz", prompt_v2)
 
     result = CodeExporter().export(
         project_root=root,
@@ -396,7 +395,8 @@ def test_gzip_manifest_records_base64_and_prompts_are_copied(tmp_path, monkeypat
         if item["path"] == "history.json.gz"
     )
     assert entry["encoding"] == "base64"
-    assert (result.output_dir / "baic_prompt.md").read_text() == "Task: Bundle gzip history"
+    assert (result.output_dir / "baic_prompt_text.md").read_text() == "Task: Bundle gzip history"
+    assert not (result.output_dir / "baic_prompt_gzip.md").exists()
 
 
 def test_tar_gz_transport_writes_encoded_text_payload_and_round_trips(tmp_path):
@@ -425,8 +425,9 @@ def test_tar_gz_transport_writes_encoded_text_payload_and_round_trips(tmp_path):
     assert transport["archive_sha256"] == hashlib.sha256(archive_bytes).hexdigest()
     with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as package:
         assert package.extractfile("app.py").read() == b"print('hello')\n"
-    assert (out / "baic_prompt.md").is_file()
-    assert "tar+gzip+base64" in (out / "baic_prompt.md").read_text()
+    assert (out / "baic_prompt_gzip.md").is_file()
+    assert "tar+gzip+base64" in (out / "baic_prompt_gzip.md").read_text()
+    assert not (out / "baic_prompt_text.md").exists()
     assert list(out.glob("*.tar.gz")) == []
     assert list(out.glob("*_bundle_*.txt")) == []
 
@@ -439,7 +440,8 @@ def test_text_is_default_transport(tmp_path):
     CodeExporter().export(project_root=root, output_dir=out, interactive=False)
     assert list(out.glob("*_bundle_*.txt"))
     assert list(out.glob("*_payload_*.txt")) == []
-    assert "readable text bundles" in (out / "baic_prompt.md").read_text()
+    assert "readable text bundles" in (out / "baic_prompt_text.md").read_text()
+    assert not (out / "baic_prompt_gzip.md").exists()
 
 
 def test_text_transport_remains_available(tmp_path):
@@ -452,3 +454,19 @@ def test_text_transport_remains_available(tmp_path):
     )
     assert list(out.glob("*_bundle_*.txt"))
     assert list(out.glob("*_context_*.tar.gz")) == []
+
+
+def test_prompt_helpers_select_transport_specific_files(tmp_path, monkeypatch):
+    from build_ai_context import writing
+
+    text_prompt = tmp_path / "text.md"
+    gzip_prompt = tmp_path / "gzip.md"
+    text_prompt.write_text("text [PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]")
+    gzip_prompt.write_text("gzip [PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]")
+    monkeypatch.setitem(writing._PROMPT_PATHS, "text", text_prompt)
+    monkeypatch.setitem(writing._PROMPT_PATHS, "tar-gz", gzip_prompt)
+
+    assert writing.get_baic_prompt_md_content("TASK", "text") == "text TASK"
+    assert writing.get_baic_prompt_md_content("TASK", "tar-gz") == "gzip TASK"
+    assert writing.prompt_output_name_for_transport("text") == "baic_prompt_text.md"
+    assert writing.prompt_output_name_for_transport("tar-gz") == "baic_prompt_gzip.md"
