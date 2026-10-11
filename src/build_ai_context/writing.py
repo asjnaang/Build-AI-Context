@@ -28,8 +28,8 @@ from build_ai_context.constants import (
 )
 from build_ai_context.models import FileChunk, SourceFile
 
-_TEXT_PROMPT_PATH = Path(__file__).parent / "baic_prompt.md"
-_ENCODED_PROMPT_PATH = Path(__file__).parent / "baic_prompt_6_v2.md"
+_TEXT_PROMPT_PATH = Path(__file__).parent / "baic_prompt_text.md"
+_ENCODED_PROMPT_PATH = Path(__file__).parent / "baic_prompt_gzip.md"
 _BAIC_PROMPT_MD_PATH = _TEXT_PROMPT_PATH
 _TASK_PLACEHOLDER = "[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]"
 
