@@ -259,7 +259,7 @@ class CodeExporter:
         task: Optional[str] = None,
         force_bundle: bool = False,
         force_ignored: bool = False,
-        transport: str = "tar-gz",
+        transport: str = "text",
         exclude_paths: List[str] | None = None,
         exclude_formats: List[str] | None = None,
     ) -> ExportResult:
@@ -268,7 +268,7 @@ class CodeExporter:
         if transport not in {"tar-gz", "text"}:
             raise ValueError("transport must be 'tar-gz' or 'text'")
         if transport == "tar-gz" and self.redact:
-            raise ValueError("redact requires text transport; tar-gz preserves exact source bytes")
+            raise ValueError("redact requires text transport")
         if not root.exists():
             raise ValueError(f"Project root does not exist: {root}")
         if not root.is_dir():
