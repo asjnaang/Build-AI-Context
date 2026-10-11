@@ -375,7 +375,8 @@ def test_gzip_manifest_records_base64_and_prompts_are_copied(tmp_path, monkeypat
     prompt.write_text("Task: [PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]")
     prompt_v2 = tmp_path / "baic_prompt_6_v2.md"
     prompt_v2.write_text("Prompt v2")
-    monkeypatch.setattr(writing, "_PROMPT_PATHS", (prompt, prompt_v2))
+    monkeypatch.setattr(writing, "_TEXT_PROMPT_PATH", prompt)
+    monkeypatch.setattr(writing, "_ENCODED_PROMPT_PATH", prompt_v2)
     monkeypatch.setattr(writing, "_BAIC_PROMPT_MD_PATH", prompt)
 
     result = CodeExporter().export(
@@ -396,11 +397,12 @@ def test_gzip_manifest_records_base64_and_prompts_are_copied(tmp_path, monkeypat
     )
     assert entry["encoding"] == "base64"
     assert (result.output_dir / "baic_prompt.md").read_text() == "Task: Bundle gzip history"
-    assert (result.output_dir / "baic_prompt_6_v2.md").read_text() == "Prompt v2"
 
 
-def test_default_transport_writes_deterministic_tar_gz_manifest_and_prompts(tmp_path):
+def test_tar_gz_transport_writes_encoded_text_payload_and_round_trips(tmp_path):
+    import base64
     import hashlib
+    import io
     import json
     import tarfile
 
@@ -408,20 +410,36 @@ def test_default_transport_writes_deterministic_tar_gz_manifest_and_prompts(tmp_
     root.mkdir()
     (root / "app.py").write_text("print('hello')\n")
     out = tmp_path / "out"
-    result = CodeExporter().export(project_root=root, output_dir=out, interactive=False)
+    result = CodeExporter().export(
+        project_root=root, output_dir=out, interactive=False, transport="tar-gz"
+    )
     manifest = json.loads(result.manifest_path.read_text())
-    archive = out / manifest["transport"]["archive"]
-    assert manifest["transport"]["format"] == "tar+gzip"
-    assert manifest["transport"]["sha256"] == hashlib.sha256(archive.read_bytes()).hexdigest()
-    assert manifest["archive_entries"][0]["path"] == "app.py"
-    with tarfile.open(archive, "r:gz") as package:
+    transport = manifest["transport"]
+    payload = out / transport["payload"]
+    payload_bytes = payload.read_bytes()
+    assert transport["format"] == "tar+gzip+base64"
+    assert transport["payload_sha256"] == hashlib.sha256(payload_bytes).hexdigest()
+    header, _, body = payload_bytes.partition(b"\n\n")
+    assert header.startswith(b"BAIC-ENCODED-CONTEXT-V1\n")
+    archive_bytes = base64.b64decode(b"".join(body.split()), validate=True)
+    assert transport["archive_sha256"] == hashlib.sha256(archive_bytes).hexdigest()
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as package:
         assert package.extractfile("app.py").read() == b"print('hello')\n"
-        names = package.getnames()
-    assert ".ai-context/prompts/baic_prompt.md" in names
-    assert ".ai-context/prompts/baic_prompt_6_v2.md" in names
     assert (out / "baic_prompt.md").is_file()
-    assert (out / "baic_prompt_6_v2.md").is_file()
+    assert "tar+gzip+base64" in (out / "baic_prompt.md").read_text()
+    assert list(out.glob("*.tar.gz")) == []
     assert list(out.glob("*_bundle_*.txt")) == []
+
+
+def test_text_is_default_transport(tmp_path):
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "app.py").write_text("print('hello')\n")
+    out = tmp_path / "out"
+    CodeExporter().export(project_root=root, output_dir=out, interactive=False)
+    assert list(out.glob("*_bundle_*.txt"))
+    assert list(out.glob("*_payload_*.txt")) == []
+    assert "readable text bundles" in (out / "baic_prompt.md").read_text()
 
 
 def test_text_transport_remains_available(tmp_path):
