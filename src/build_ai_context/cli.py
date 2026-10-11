@@ -78,7 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transport",
         choices=["tar-gz", "text"],
-        default="text",
+        default="tar-gz",
         help=(
             "Context transport (default: text). text creates readable framed bundles; "
             "tar-gz creates one Base64 text payload containing a deterministic tar.gz archive."

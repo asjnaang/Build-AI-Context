@@ -1,17 +1,122 @@
 # AI Coding Agent Contract: Delivery-First Execution
 
-## Attachment bootstrap: readable text bundles
-
-This package uses the default `text` transport. Read the matching `*_manifest_*.json` and every manifest-named
-`*_bundle_*.txt`. Run the embedded framed-text extractor below before editing. Require complete bundle
-availability, safe paths, complete chunk sequences, matching sizes and hashes, and a successful reconstruction
-report. Use reconstructed files as exact source preimages. A file-tree entry is inventory, not editable source.
-
 ## Task
 
 ```text
 [PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]
 ```
+
+## Attachment bootstrap: Base64-encoded tar.gz text payload
+
+This package uses `--transport tar-gz`, but the external attachment is text, not a binary archive. Expect exactly
+one `*_payload_*.txt`, its matching `*_manifest_*.json`, and this prompt. Confirm
+`transport.format == "tar+gzip+base64"`. Verify the exact payload size and SHA-256, parse the
+`BAIC-ENCODED-CONTEXT-V1` header, remove ASCII whitespace only from the Base64 body, decode with strict
+validation, and verify the Base64-body and decoded archive sizes and SHA-256 values from the manifest.
+
+Safely inspect the decoded TAR before extraction. Reject absolute paths, backslashes, empty/dot/dot-dot path
+components, duplicate normalized paths, links, devices, FIFOs, sockets, unexpected members, missing manifest
+entries, and any extracted size or SHA-256 mismatch. Extract regular files only into an immutable staged
+directory, then atomically publish it. Preserve nested `.gz` repository files as original bytes. Continue only
+after writing and reading a successful reconstruction report. Use the validated extracted files as exact source
+preimages. Do not treat the Base64 payload as source text and do not dump it into model context.
+
+### Embedded encoded-payload extractor
+
+```python
+#!/usr/bin/env python3
+"""Validate and reconstruct a BAIC tar+gzip+base64 text payload."""
+import argparse, base64, hashlib, io, json, shutil, tarfile, tempfile
+from pathlib import Path, PurePosixPath
+
+def fail(message):
+    raise ValueError(message)
+
+def safe(name):
+    path = PurePosixPath(name)
+    if not name or "\\" in name or path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
+        fail(f"unsafe path: {name!r}")
+    return path
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--manifest", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args()
+    manifest_path = Path(args.manifest).resolve()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    transport = manifest.get("transport") or {}
+    if transport.get("format") != "tar+gzip+base64":
+        fail("manifest is not a tar+gzip+base64 package")
+    payload = manifest_path.parent / transport["payload"]
+    payload_bytes = payload.read_bytes()
+    if len(payload_bytes) != transport["payload_size_bytes"] or digest(payload_bytes) != transport["payload_sha256"]:
+        fail("payload size or SHA-256 mismatch")
+    header, separator, body = payload_bytes.partition(b"\n\n")
+    if not separator or not header.startswith(b"BAIC-ENCODED-CONTEXT-V1\n"):
+        fail("invalid payload header")
+    encoded = b"".join(body.split())
+    if len(encoded) != transport["base64_body_size_bytes"] or digest(encoded) != transport["base64_body_sha256"]:
+        fail("Base64 body size or SHA-256 mismatch")
+    archive_bytes = base64.b64decode(encoded, validate=True)
+    if len(archive_bytes) != transport["archive_size_bytes"] or digest(archive_bytes) != transport["archive_sha256"]:
+        fail("decoded archive size or SHA-256 mismatch")
+    expected = {entry["path"]: entry for entry in manifest["archive_entries"]}
+    files = {}
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
+        seen = set()
+        for member in archive.getmembers():
+            name = str(safe(member.name))
+            if name in seen:
+                fail(f"duplicate archive member: {name}")
+            seen.add(name)
+            if not member.isfile() or name not in expected:
+                fail(f"unexpected or unsafe archive member: {name}")
+            stream = archive.extractfile(member)
+            data = stream.read() if stream else b""
+            entry = expected[name]
+            if len(data) != entry["size_bytes"] or digest(data) != entry["sha256"]:
+                fail(f"entry size or SHA-256 mismatch: {name}")
+            files[name] = data
+    if set(files) != set(expected):
+        fail(f"archive path-set mismatch: missing={sorted(set(expected)-set(files))}")
+    output = Path(args.output).resolve()
+    if output.exists() and not args.force:
+        fail(f"output exists; use --force: {output}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix=f".{output.name}.stage-", dir=output.parent))
+    try:
+        for name, data in files.items():
+            target = stage.joinpath(*safe(name).parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        (stage / "RECONSTRUCTION_REPORT.json").write_text(json.dumps({
+            "status": "success", "manifest": manifest_path.name,
+            "payload": payload.name, "restored_entries": len(files),
+            "archive_sha256": digest(archive_bytes),
+        }, indent=2) + "\n")
+        if output.exists():
+            shutil.rmtree(output)
+        stage.replace(output)
+    finally:
+        if stage.exists():
+            shutil.rmtree(stage)
+
+if __name__ == "__main__":
+    main()
+```
+
+Run:
+
+```bash
+python3 extract_ai_context.py --manifest '<exact-manifest.json>' --output reconstructed-context
+```
+
+## Note:
 
 Session root: `/mnt/data`, unless the runtime or user provides another writable root.
 Repository root: determine from exact repository evidence; do not confuse the session root, manifest project root, child project root, and Git application root.
