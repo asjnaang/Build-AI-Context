@@ -8,11 +8,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from build_ai_context import chunking, filetree, graph, scanner, writing
-from build_ai_context.constants import (
-    LARGE_BINARY_FILE_WARN_BYTES,
-    extract_timestamp_from_dir_name,
-)
+from build_ai_context.constants import extract_timestamp_from_dir_name
+from build_ai_context.formats import policy_for_path
 from build_ai_context.models import ExportConfig, ExportResult, FileChunk, SourceFile
+from build_ai_context.planning import build_export_plan
 
 
 class CodeExporter:
@@ -222,6 +221,9 @@ class CodeExporter:
         warnings: Sequence[Dict[str, object]] = (),
         task: Optional[str] = None,
         transport: str = "text",
+        transport_files: Sequence[SourceFile] | None = None,
+        binary_policy: str = "include",
+        policy_omissions: Sequence[Dict[str, object]] = (),
     ) -> Path:
         """Write bundles and manifest to the output directory."""
         return writing.write_bundles_and_manifest(
@@ -242,6 +244,9 @@ class CodeExporter:
             warnings=warnings,
             task=task,
             transport=transport,
+            transport_files=transport_files,
+            binary_policy=binary_policy,
+            policy_omissions=policy_omissions,
         )
 
     # -------------------------------------------------------------------------
@@ -262,7 +267,8 @@ class CodeExporter:
         task: Optional[str] = None,
         force_bundle: bool = False,
         force_ignored: bool = False,
-        transport: str = "text",
+        transport: str = "tar-gz",
+        binary_policy: str = "include",
         exclude_paths: List[str] | None = None,
         exclude_formats: List[str] | None = None,
     ) -> ExportResult:
@@ -343,9 +349,11 @@ class CodeExporter:
             selected_files, force_bundle_events = self.force_bundle_json_files(
                 selected_files, max_file_lines
             )
+        export_plan = build_export_plan(selected_files, transport, binary_policy)
+        transport_files = list(export_plan.transport_files)
         effective_max_file_lines = 0 if force_bundle else max_file_lines
         chunks, split_items = self.split_into_chunks(
-            selected_files, max_lines, max_file_lines=effective_max_file_lines
+            transport_files, max_lines, max_file_lines=effective_max_file_lines
         )
         warnings = [item for item in split_items if item.get("reason") == "large_file_warning"]
         skipped_during_split = [
@@ -354,22 +362,23 @@ class CodeExporter:
         bundles, skipped_during_pack = self.pack_chunks(chunks, max_lines)
         skipped_during_processing = skipped_during_split + skipped_during_pack
         warnings.extend(force_bundle_events)
-        oversized_pdfs = [
+        oversized_binaries = [
             source
-            for source in selected_files
-            if source.rel_path.suffix.lower() == ".pdf"
-            and source.size_bytes > LARGE_BINARY_FILE_WARN_BYTES
+            for source in transport_files
+            if policy_for_path(source.rel_path).size_warning_bytes is not None
+            and source.size_bytes > policy_for_path(source.rel_path).size_warning_bytes
         ]
         if transport == "tar-gz":
             warnings.extend(
                 {
                     "path": source.rel_path.as_posix(),
-                    "reason": "large_pdf_in_compressed_payload",
+                    "reason": "large_binary_in_compressed_payload",
+                    "content_kind": "binary",
                     "size_bytes": source.size_bytes,
-                    "threshold_bytes": LARGE_BINARY_FILE_WARN_BYTES,
+                    "threshold_bytes": policy_for_path(source.rel_path).size_warning_bytes,
                     "transport": "tar+gzip+base64",
                 }
-                for source in oversized_pdfs
+                for source in oversized_binaries
             )
 
         out_dir = (
@@ -392,6 +401,7 @@ class CodeExporter:
         manifest_path = self.write_bundles_and_manifest(
             root=root,
             selected_files=selected_files,
+            transport_files=transport_files,
             bundles=bundles,
             output_dir=out_dir,
             max_lines=max_lines,
@@ -406,6 +416,8 @@ class CodeExporter:
             timestamp=timestamp,
             task=task,
             transport=transport,
+            binary_policy=binary_policy,
+            policy_omissions=export_plan.omitted_files,
         )
 
         overview_path = None
@@ -422,18 +434,24 @@ class CodeExporter:
         self.print_success("\nExport complete.")
         self.print_success(f"Output directory : {out_dir}")
         self.print_success(f"Manifest         : {manifest_path}")
-        for source in oversized_pdfs:
+        for source in oversized_binaries:
             if transport == "tar-gz":
                 size_mib = source.size_bytes / (1024 * 1024)
                 self.print_warning(
-                    f"Large PDF in compressed payload: {source.rel_path.as_posix()} "
-                    f"({size_mib:.1f} MiB). PDF data is preserved exactly inside "
-                    "the gzip-compressed archive; already-compressed PDFs may not shrink much."
+                    f"Large binary file in compressed payload: {source.rel_path.as_posix()} "
+                    f"({size_mib:.1f} MiB). Binary data is preserved exactly inside "
+                    "the gzip-compressed archive; already-compressed formats may not shrink much."
                 )
         if overview_path is not None:
             self.print_success(f"Project overview : {overview_path}")
         self.print_success(f"Bundles created  : {len(bundles)}")
-        self.print_success(f"Files exported   : {len(selected_files)}")
+        self.print_success(f"Files selected   : {len(selected_files)}")
+        self.print_success(f"Files transported: {len(transport_files)}")
+        if export_plan.omitted_files:
+            self.print_warning(
+                f"Policy omissions  : {len(export_plan.omitted_files)} "
+                f"(binary policy: {binary_policy})"
+            )
 
         return ExportResult(
             output_dir=out_dir,

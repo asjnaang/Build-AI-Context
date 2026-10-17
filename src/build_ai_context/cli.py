@@ -28,6 +28,7 @@ from build_ai_context.constants import (
 )
 from build_ai_context.exporter import CodeExporter
 from build_ai_context.models import SourceFile
+from build_ai_context.planning import build_export_plan
 from build_ai_context.scanner import expand_explicit_path_inputs
 from build_ai_context.update_source_file_headers import DEFAULT_EXCLUDES, walk_and_update
 
@@ -80,8 +81,18 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["tar-gz", "text"],
         default="tar-gz",
         help=(
-            "Context transport (default: text). text creates readable framed bundles; "
+            "Context transport (default: tar-gz). text creates readable framed bundles; "
             "tar-gz creates one Base64 text payload containing a deterministic tar.gz archive."
+        ),
+    )
+    parser.add_argument(
+        "--binary-policy",
+        choices=["include", "skip", "compressed-only"],
+        default="include",
+        help=(
+            "Binary-source policy (default: include). include Base64-wraps binary "
+            "formats in text transport; skip excludes them; compressed-only includes "
+            "them only with --transport tar-gz."
         ),
     )
     parser.add_argument(
@@ -194,15 +205,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-
 def resolve_task_content(args) -> str | None:
     """Return task text from --task or the macOS clipboard."""
     if not getattr(args, "task_clipboard", False):
         return getattr(args, "task", None)
     try:
-        completed = subprocess.run(
-            ["pbpaste"], check=True, capture_output=True, text=True
-        )
+        completed = subprocess.run(["pbpaste"], check=True, capture_output=True, text=True)
     except FileNotFoundError as exc:
         raise ValueError("--task-clipboard/--tc requires the macOS pbpaste command") from exc
     except subprocess.CalledProcessError as exc:
@@ -210,6 +218,7 @@ def resolve_task_content(args) -> str | None:
     if not completed.stdout:
         raise ValueError("The macOS clipboard does not contain task text")
     return completed.stdout
+
 
 def main() -> int:
     """Main entry point for the CLI."""
@@ -282,9 +291,7 @@ def run_quick_artifacts(args) -> int:
 
         if getattr(args, "graph", False):
             output_format = getattr(args, "output_format", "txt") or "txt"
-            graph_content = exporter.generate_graph(
-                all_files, root, output_format=output_format
-            )
+            graph_content = exporter.generate_graph(all_files, root, output_format=output_format)
             ext = "json" if output_format == "json" else "txt"
             graph_name = f"{folder_name}_code_graph_{timestamp}.{ext}"
             output_root = exporter.generated_files_dir(root)
@@ -374,9 +381,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
                 path_inputs = args.paths
                 if args.paths:
                     raw_path_input = "\n".join(args.paths)
-                    path_inputs = exporter.parse_intelligent_input(
-                        raw_path_input, all_files, root
-                    )
+                    path_inputs = exporter.parse_intelligent_input(raw_path_input, all_files, root)
                     if not path_inputs:
                         path_inputs = args.paths
                 selected_files, selection_metadata = exporter.non_interactive_select_files(
@@ -399,7 +404,9 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         selection_metadata["excluded_paths"] = excluded_paths
         selection_metadata["excluded_formats"] = excluded_formats
         if not selected_files:
-            exporter.print_warning("No files remain after applying exclusions. Nothing was exported.")
+            exporter.print_warning(
+                "No files remain after applying exclusions. Nothing was exported."
+            )
             return 0, None, None
 
         exporter.print_info(
@@ -411,9 +418,11 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             selected_files, force_bundle_events = exporter.force_bundle_json_files(
                 selected_files, args.max_file_lines
             )
+        export_plan = build_export_plan(selected_files, args.transport, args.binary_policy)
+        transport_files = list(export_plan.transport_files)
         effective_max_file_lines = 0 if args.force_bundle else args.max_file_lines
         chunks, split_items = exporter.split_into_chunks(
-            selected_files,
+            transport_files,
             bundle_max_lines,
             max_file_lines=effective_max_file_lines,
         )
@@ -461,6 +470,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         manifest_path = exporter.write_bundles_and_manifest(
             root=root,
             selected_files=selected_files,
+            transport_files=transport_files,
             bundles=bundles,
             output_dir=output_dir,
             max_lines=bundle_max_lines,
@@ -475,6 +485,8 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             timestamp=timestamp,
             task=task,
             transport=args.transport,
+            binary_policy=args.binary_policy,
+            policy_omissions=export_plan.omitted_files,
         )
 
         overview_path = None
@@ -508,15 +520,9 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
                 exporter.print_warning(f"  - {entry}")
 
         if not args.non_interactive:
-            prompt_name = (
-                "baic_prompt_gzip.md"
-                if args.transport == "tar-gz"
-                else "baic_prompt_text.md"
-            )
+            prompt_name = "baic_prompt.md"
             package_name = (
-                "Base64 payload text file"
-                if args.transport == "tar-gz"
-                else "text bundle file(s)"
+                "Base64 payload text file" if args.transport == "tar-gz" else "text bundle file(s)"
             )
             print(
                 f"\n📝 Open '{prompt_name}' in the output directory and replace the "
