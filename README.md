@@ -164,6 +164,13 @@ baic . --all --transport tar-gz
 Redaction remains available with the default `text` transport; `--redact` cannot be combined with `--transport tar-gz` because compressed transport preserves exact selected bytes. `tar-gz` is an internal archive representation;
 no `.tar.gz`, `.gz`, or `.zip` attachment remains in the generated output directory.
 
+PDF files are binary. With `--transport text`, BAIC wraps their original bytes as Base64 in the readable
+bundle, just as it does for `.gz` files; the manifest records `encoding: base64`, the original byte size,
+and the original SHA-256. With `--transport tar-gz`, the PDF is stored byte-for-byte in the internal TAR
+before the payload is Gzip-compressed and Base64-encoded. PDFs larger than 15 MiB are called out in the
+manifest warnings and in the completion output. Because most PDFs already compress their streams, Gzip may
+not reduce their size significantly.
+
 ## Filetree Feature
 
 Generate a path list that AI agents can parse: one full relative path per line, each ending with a comma:

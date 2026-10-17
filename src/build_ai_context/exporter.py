@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from build_ai_context import chunking, filetree, graph, scanner, writing
-from build_ai_context.constants import extract_timestamp_from_dir_name
+from build_ai_context.constants import (
+    LARGE_BINARY_FILE_WARN_BYTES,
+    extract_timestamp_from_dir_name,
+)
 from build_ai_context.models import ExportConfig, ExportResult, FileChunk, SourceFile
 
 
@@ -281,9 +284,7 @@ class CodeExporter:
             root,
             skip_secret_files,
             force_ignored_paths=(
-                scanner.expand_explicit_path_inputs(paths or [], root)
-                if force_ignored
-                else []
+                scanner.expand_explicit_path_inputs(paths or [], root) if force_ignored else []
             ),
         )
 
@@ -353,6 +354,23 @@ class CodeExporter:
         bundles, skipped_during_pack = self.pack_chunks(chunks, max_lines)
         skipped_during_processing = skipped_during_split + skipped_during_pack
         warnings.extend(force_bundle_events)
+        oversized_pdfs = [
+            source
+            for source in selected_files
+            if source.rel_path.suffix.lower() == ".pdf"
+            and source.size_bytes > LARGE_BINARY_FILE_WARN_BYTES
+        ]
+        if transport == "tar-gz":
+            warnings.extend(
+                {
+                    "path": source.rel_path.as_posix(),
+                    "reason": "large_pdf_in_compressed_payload",
+                    "size_bytes": source.size_bytes,
+                    "threshold_bytes": LARGE_BINARY_FILE_WARN_BYTES,
+                    "transport": "tar+gzip+base64",
+                }
+                for source in oversized_pdfs
+            )
 
         out_dir = (
             Path(output_dir).expanduser().resolve()
@@ -404,6 +422,14 @@ class CodeExporter:
         self.print_success("\nExport complete.")
         self.print_success(f"Output directory : {out_dir}")
         self.print_success(f"Manifest         : {manifest_path}")
+        for source in oversized_pdfs:
+            if transport == "tar-gz":
+                size_mib = source.size_bytes / (1024 * 1024)
+                self.print_warning(
+                    f"Large PDF in compressed payload: {source.rel_path.as_posix()} "
+                    f"({size_mib:.1f} MiB). PDF data is preserved exactly inside "
+                    "the gzip-compressed archive; already-compressed PDFs may not shrink much."
+                )
         if overview_path is not None:
             self.print_success(f"Project overview : {overview_path}")
         self.print_success(f"Bundles created  : {len(bundles)}")
