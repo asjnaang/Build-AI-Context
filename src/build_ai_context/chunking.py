@@ -72,7 +72,6 @@ def chunk_overhead_lines(redact: bool = False) -> int:
     return len(render_chunk_block(dummy, redact).splitlines()) - 1
 
 
-
 def _json_shape(value: Any) -> object:
     """Return a stable structural signature while ignoring concrete values."""
     if isinstance(value, dict):
@@ -147,13 +146,15 @@ def force_bundle_json_files(
             payload = json.loads("\n".join(source.lines))
         except (TypeError, json.JSONDecodeError) as exc:
             transformed.append(source)
-            events.append({
-                "path": source.rel_path.as_posix(),
-                "reason": "force_bundle_invalid_json",
-                "line_count": source.line_count,
-                "threshold": threshold,
-                "error": str(exc),
-            })
+            events.append(
+                {
+                    "path": source.rel_path.as_posix(),
+                    "reason": "force_bundle_invalid_json",
+                    "line_count": source.line_count,
+                    "threshold": threshold,
+                    "error": str(exc),
+                }
+            )
             continue
         replacement = None
         details = None
@@ -185,16 +186,19 @@ def force_bundle_json_files(
                 break
         if replacement is None:
             transformed.append(source)
-            events.append({
-                "path": source.rel_path.as_posix(),
-                "reason": "force_bundle_minimum_sample_exceeds_threshold",
-                "line_count": source.line_count,
-                "threshold": threshold,
-            })
+            events.append(
+                {
+                    "path": source.rel_path.as_posix(),
+                    "reason": "force_bundle_minimum_sample_exceeds_threshold",
+                    "line_count": source.line_count,
+                    "threshold": threshold,
+                }
+            )
         else:
             transformed.append(replacement)
             events.append(details)
     return transformed, events
+
 
 def split_into_chunks(
     files: Sequence[SourceFile],
@@ -219,9 +223,7 @@ def split_into_chunks(
     chunks: List[FileChunk] = []
     skipped: List[Dict[str, object]] = []
     overhead = chunk_overhead_lines(redact)
-    skip_threshold = (
-        LARGE_FILE_SKIP_LINES if max_file_lines is None else max_file_lines
-    )
+    skip_threshold = LARGE_FILE_SKIP_LINES if max_file_lines is None else max_file_lines
 
     for source in files:
         lines = source.lines
@@ -230,7 +232,7 @@ def split_into_chunks(
             continue
 
         # Check if file exceeds skip threshold (0 = disabled / unlimited)
-        if skip_threshold > 0 and total_lines >= skip_threshold:
+        if source.encoding == "text" and skip_threshold > 0 and total_lines >= skip_threshold:
             skipped.append(
                 {
                     "path": source.rel_path.as_posix(),
@@ -242,7 +244,7 @@ def split_into_chunks(
             continue
 
         # Warn for large files that are still included
-        if total_lines >= LARGE_FILE_WARN_LINES:
+        if source.encoding == "text" and total_lines >= LARGE_FILE_WARN_LINES:
             skipped.append(
                 {
                     "path": source.rel_path.as_posix(),

@@ -24,6 +24,7 @@ from build_ai_context.constants import (
     DEFAULT_SECRET_PATTERNS,
     DEFAULT_TEXT_ENCODING,
     EXTRA_EXCLUDED_PATTERNS,
+    BASE64_BINARY_EXTENSIONS,
     SPECIAL_FILENAMES,
 )
 from build_ai_context.models import SourceFile
@@ -70,9 +71,7 @@ def _rebase_gitignore_lines(lines: Sequence[str], base: Path) -> List[str]:
 
 def load_gitignore_spec(root: Path) -> pathspec.PathSpec:
     """Load .gitignore patterns from the project root."""
-    return pathspec.PathSpec.from_lines(
-        "gitwildmatch", _read_gitignore_lines(root / ".gitignore")
-    )
+    return pathspec.PathSpec.from_lines("gitwildmatch", _read_gitignore_lines(root / ".gitignore"))
 
 
 def path_matches_any_pattern(rel_path: str, patterns: Iterable[str]) -> bool:
@@ -153,7 +152,7 @@ def is_probably_binary(path: Path) -> bool:
 def read_binary_lines(path: Path) -> List[str]:
     """Return binary file bytes as wrapped Base64 text lines."""
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-    return [encoded[index:index + 76] for index in range(0, len(encoded), 76)]
+    return [encoded[index : index + 76] for index in range(0, len(encoded), 76)]
 
 
 def read_text_lines(path: Path) -> List[str]:
@@ -187,22 +186,16 @@ def scan_supported_files(
     def can_force_include(rel_path: Path) -> bool:
         rel = rel_path.as_posix().rstrip("/")
         is_requested = any(
-            rel == requested
-            or rel.startswith(requested + "/")
-            or requested.startswith(rel + "/")
+            rel == requested or rel.startswith(requested + "/") or requested.startswith(rel + "/")
             for requested in normalized_forced_paths
         )
         if not is_requested or ".git" in rel_path.parts:
             return False
-        return not (
-            skip_secret_files
-            and path_matches_any_pattern(rel, DEFAULT_SECRET_PATTERNS)
-        )
+        return not (skip_secret_files and path_matches_any_pattern(rel, DEFAULT_SECRET_PATTERNS))
+
     discovered: List[SourceFile] = []
     skipped_reasons: Dict[str, int] = defaultdict(int)
-    inherited_patterns: Dict[Path, List[str]] = {
-        root: _read_gitignore_lines(root / ".gitignore")
-    }
+    inherited_patterns: Dict[Path, List[str]] = {root: _read_gitignore_lines(root / ".gitignore")}
 
     for dirpath, dirnames, filenames in os.walk(root, topdown=True):
         current_dir = Path(dirpath)
@@ -242,14 +235,14 @@ def scan_supported_files(
             if not category:
                 skipped_reasons["unsupported_type"] += 1
                 continue
-            is_gzip = path.suffix.lower() == ".gz"
+            is_base64_binary = path.suffix.lower() in BASE64_BINARY_EXTENSIONS
             binary = is_probably_binary(path)
-            if binary and not is_gzip:
+            if binary and not is_base64_binary:
                 skipped_reasons["binary"] += 1
                 continue
             try:
-                encoding = "base64" if is_gzip else "text"
-                lines = read_binary_lines(path) if is_gzip else read_text_lines(path)
+                encoding = "base64" if is_base64_binary else "text"
+                lines = read_binary_lines(path) if is_base64_binary else read_text_lines(path)
                 raw_bytes = path.read_bytes()
                 size_bytes = len(raw_bytes)
                 sha256 = hashlib.sha256(raw_bytes).hexdigest()
@@ -270,6 +263,7 @@ def scan_supported_files(
             )
     discovered.sort(key=lambda item: item.rel_path.as_posix())
     return discovered, dict(sorted(skipped_reasons.items()))
+
 
 # ---------------------------------------------------------------------------
 # Selection helpers
@@ -333,24 +327,17 @@ def _resolve_selection_token(
         return [candidate]
     if candidate in all_names:
         return sorted(
-            path for path in all_path_strs
-            if path == candidate or path.endswith("/" + candidate)
+            path for path in all_path_strs if path == candidate or path.endswith("/" + candidate)
         )
-    suffix_matches = sorted(
-        path for path in all_path_strs if path.endswith("/" + candidate)
-    )
+    suffix_matches = sorted(path for path in all_path_strs if path.endswith("/" + candidate))
     if suffix_matches:
         return suffix_matches
     if candidate.startswith(".") and "/" not in candidate:
-        extension_matches = sorted(
-            path for path in all_path_strs if Path(path).suffix == candidate
-        )
+        extension_matches = sorted(path for path in all_path_strs if Path(path).suffix == candidate)
         if extension_matches:
             return extension_matches
     if "/" not in candidate and " " not in candidate:
-        stem_matches = sorted(
-            path for path in all_path_strs if Path(path).stem == candidate
-        )
+        stem_matches = sorted(path for path in all_path_strs if Path(path).stem == candidate)
         if stem_matches:
             return stem_matches
     directory_prefix = candidate.rstrip("/") + "/"
