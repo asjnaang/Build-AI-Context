@@ -1,6 +1,6 @@
 # build-ai-context
 
-Export source code and project files into AI-friendly text bundles with a compact manifest. Perfect for feeding your codebase to AI assistants like Claude, GPT-4, Copilot, or any LLM.
+Export selected source and project files as readable text bundles or a Base64-encoded compressed text payload with a compact manifest and agent prompt. Perfect for feeding your codebase to AI assistants like Claude, GPT-4, Copilot, or any LLM.
 
 **Commands:** `build-ai-context` or `baic` (short alias)
 
@@ -112,6 +112,7 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `--max-file-lines` | Skip repo source files with ≥ N lines when bundling (default: 3000; `0` = no limit). Bundle output size stays fixed at 8000 lines. | `--max-file-lines 10000` |
 | `--force-ignored` | Include supported files under explicit `--paths` even when ignored; secret-like files still require `--include-secret-files` | `--paths .gen_files/reports --force-ignored` |
 | `--force-bundle` | Bundle selected files regardless of the per-file line limit; oversized JSON is sampled when possible | `--paths reports --force-bundle` |
+| `--transport` | `text` (default) or compressed `tar-gz` Base64 text payload | `--transport text` |
 | `--output-dir` | Custom output folder | `--output-dir ./my-bundles` |
 | `--project-overview` | Generate architecture overview | `--project-overview` |
 | `--include-secret-files` | Include .env, keys, etc. (careful!) | `--include-secret-files` |
@@ -141,65 +142,27 @@ Shortcuts you can use: `py`→`python`, `ts`→`typescript`, `js`→`javascript`
 
 ## Output Files
 
-By default, generated artifacts are written below `<project>/.gen_files/`. Full exports use a timestamped `exported_sources_<project>_<timestamp>/` child folder, while `--tree` and `--graph` write their files directly under `.gen_files/`. An explicit `--output-dir` remains unchanged.
+The default `text` transport preserves the existing behavior and commands: BAIC writes readable, framed
+`*_bundle_*.txt` files capped at 8000 rendered lines, one manifest JSON, and `baic_prompt_text.md`.
 
-When the project already has a `.gitignore`, the tool removes exact legacy generated-output patterns and adds the single rule `.gen_files/**`. It does not create a new `.gitignore` solely for this purpose.
+Use `--transport tar-gz` when attachment count matters. BAIC deterministically TARs and Gzip-compresses the
+selected exact source bytes, Base64-encodes the archive, and writes one `*_payload_*.txt` attachment instead of
+a binary archive. The output is one payload text file, one manifest JSON, and `baic_prompt_gzip.md`. The
+manifest validates the payload, Base64 body, decoded archive, and every source entry.
 
-After running, you'll get:
+Examples:
 
-| File | Description |
-|------|-------------|
-| `<project>_bundle_001_<timestamp>.txt`, ... | Text bundles with consistent timestamps |
-| `<project>_manifest_<timestamp>.json` | Maps every file to its bundle and line numbers |
-| `<project>_readme_<timestamp>.txt` | Quick summary of what was exported |
-| `<project>_file_tree_<timestamp>.txt` | Path list (line + comma separated) and type counts |
-| `<project>_code_graph_<timestamp>.txt` | (with `--graph`) Symbol catalog + import edges |
-| `PROJECT_OVERVIEW.txt` | (with `--project-overview`) Architecture overview |
+```bash
+# Existing commands remain readable text bundles.
+baic . --all
+baic . --non-interactive --paths src tests
 
-### Bundle Format
-
-Each file in a bundle includes a header that AI assistants can use to locate code:
-
-```
-# ===== BEGIN FILE: src/utils/auth.py =====
-# category : python
-# chunk : 1/1
-# line_range : 1-50
-# total_lines : 50
-# ===== CONTENT =====
-def authenticate(user):
-    ...
-# ===== END FILE: src/utils/auth.py (chunk 1/1) =====
+# One compressed text payload for agents that reject binary archive attachments.
+baic . --all --transport tar-gz
 ```
 
-### MANIFEST.json Structure
-
-```json
-{
-  "tool": "build-ai-context",
-  "selected_files": ["src/main.py", "src/utils.py"],
-  "selection": {
-    "selection_mode": "category",
-    "selected_categories": ["python"],
-    "selected_paths": []
-  },
-  "bundles": [
-    {
-      "bundle": "bundle_001.txt",
-      "files": [
-        {
-          "path": "src/main.py",
-          "category": "python",
-          "file_start_line": 1,
-          "file_end_line": 50,
-          "bundle_start_line": 10,
-          "bundle_end_line": 59
-        }
-      ]
-    }
-  ]
-}
-```
+Redaction remains available with the default `text` transport; `--redact` cannot be combined with `--transport tar-gz` because compressed transport preserves exact selected bytes. `tar-gz` is an internal archive representation;
+no `.tar.gz`, `.gz`, or `.zip` attachment remains in the generated output directory.
 
 ## Filetree Feature
 
@@ -371,8 +334,8 @@ baic . --non-interactive --paths src/components src/utils \
     --task "Review these files and fix the issues we discussed."
 ```
 
-The task replaces the placeholder under `## Task Contract` in the generated
-`baic_prompt.md`. Omit `--task` to keep the placeholder unchanged.
+The task replaces the placeholder under `## Task` in the generated transport-specific prompt:
+`baic_prompt_text.md` for `text`, or `baic_prompt_gzip.md` for `tar-gz`. Omit `--task` to keep the placeholder.
 
 For long multiline tasks, JSON, quotes, or other shell-sensitive content, copy the
 complete task and use `--tc` (or `--task-clipboard`). The CLI reads the clipboard
@@ -414,9 +377,9 @@ baic
 ## Using with AI Assistants
 
 1. **Run the exporter**: `baic . --categories python`
-2. **Upload bundles**: Attach `bundle_001.txt`, `bundle_002.txt`, etc.
-3. **Upload manifest**: Attach `MANIFEST.json` so AI understands file mappings
-4. **Ask away**: The AI can now reference exact file paths and line numbers
+2. **Upload the generated text**: Attach readable bundle files, or the single payload text file produced by `--transport tar-gz`.
+3. **Upload the manifest and prompt**: Attach the manifest and the generated prompt matching the transport.
+4. **Ask away**: The AI validates and extracts exact repository files before working.
 
 Example prompt to AI:
 > "I've uploaded my Python project. Using the MANIFEST.json, find the authentication logic in src/auth.py and help me add password reset functionality."
@@ -456,7 +419,7 @@ options:
   --keywords KEYWORDS   Keywords to search in file content
   --exclude-paths PATHS Remove files/folders from the final selected set
   --exclude-formats EXT Remove extensions from the final selected set
-  --task TASK            Replace the Task Contract placeholder in baic_prompt.md
+  --task TASK            Replace the Task placeholder in the transport-specific prompt
   --task-clipboard, --tc Read the Task Contract from the macOS clipboard
   --include-secret-files Include secret-like files
   --project-overview    Generate PROJECT_OVERVIEW.txt
