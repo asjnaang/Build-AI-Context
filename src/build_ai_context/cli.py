@@ -76,6 +76,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--transport",
+        choices=["tar-gz", "text"],
+        default="tar-gz",
+        help=(
+            "Context transport (default: text). text creates readable framed bundles; "
+            "tar-gz creates one Base64 text payload containing a deterministic tar.gz archive."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         default=None,
         help="Optional output directory. Defaults to a timestamped folder under the current directory.",
@@ -125,7 +134,7 @@ def build_parser() -> argparse.ArgumentParser:
     task_group.add_argument(
         "--task",
         default=None,
-        help="Replace the Task Contract placeholder in the generated baic_prompt.md.",
+        help="Replace the Task placeholder in the generated transport-specific prompt.",
     )
     task_group.add_argument(
         "--task-clipboard",
@@ -299,6 +308,8 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
 
     try:
         task = resolve_task_content(args)
+        if args.transport == "tar-gz" and getattr(args, "redact", False):
+            raise ValueError("--redact requires --transport text")
         root = Path(args.project_root).expanduser().resolve()
         if not root.exists():
             print(f"Error: Project root does not exist: {root}", file=sys.stderr)
@@ -463,6 +474,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             filetree_content=filetree_content,
             timestamp=timestamp,
             task=task,
+            transport=args.transport,
         )
 
         overview_path = None
@@ -481,7 +493,9 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         exporter.print_success(f"Manifest         : {manifest_path}")
         if overview_path is not None:
             exporter.print_success(f"Project overview : {overview_path}")
-        exporter.print_success(f"Bundles created  : {len(bundles)}")
+        exporter.print_success(
+            f"Packages created : {1 if args.transport == 'tar-gz' else len(bundles)}"
+        )
         exporter.print_success(f"Files exported   : {len(selected_files)}")
 
         if warnings:
@@ -493,12 +507,22 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             for entry in skipped_during_processing:
                 exporter.print_warning(f"  - {entry}")
 
-        if not args.non_interactive and not args.non_interactive:
+        if not args.non_interactive:
+            prompt_name = (
+                "baic_prompt_gzip.md"
+                if args.transport == "tar-gz"
+                else "baic_prompt_text.md"
+            )
+            package_name = (
+                "Base64 payload text file"
+                if args.transport == "tar-gz"
+                else "text bundle file(s)"
+            )
             print(
-                f"\n📝 Open 'baic_prompt.md' in the output directory and replace the task description "
-                f"(under ## Task Contract) with your specific feature request or question or changes needed.\n"
-                f"Then upload all bundle files along with baic_prompt.md and ask your AI assistant address the promt.md "
-                f"for best results.\n\n"
+                f"\n📝 Open '{prompt_name}' in the output directory and replace the "
+                f"description under ## Task if --task was not supplied.\n"
+                f"Upload the generated {package_name}, manifest JSON, and {prompt_name} "
+                f"to your AI assistant.\n\n"
             )
 
         return 0, all_files, skipped_reasons
