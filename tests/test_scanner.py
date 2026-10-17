@@ -97,7 +97,6 @@ class TestParseIntelligentInput:
         assert "README.md" in result
         assert "docs/guide.md/index.md" in result
 
-
     def test_paths_with_spaces_do_not_select_unrelated_files(self, tmp_path):
         requested = [
             "services/data/North Region Config_JSON_Consolidate_v1.81.json",
@@ -182,15 +181,17 @@ class TestParseIntelligentInput:
                 child.write_text("content")
                 file_paths = [child]
             for file_path in file_paths:
-                files.append(SourceFile(
-                    abs_path=file_path,
-                    rel_path=file_path.relative_to(tmp_path),
-                    category="config_docs",
-                    line_count=1,
-                    size_bytes=7,
-                    sha256="dummy",
-                    lines=["content"],
-                ))
+                files.append(
+                    SourceFile(
+                        abs_path=file_path,
+                        rel_path=file_path.relative_to(tmp_path),
+                        category="config_docs",
+                        line_count=1,
+                        size_bytes=7,
+                        sha256="dummy",
+                        lines=["content"],
+                    )
+                )
 
         raw = (
             f"{tmp_path / requested[0]}, {tmp_path / requested[1]}, "
@@ -212,6 +213,7 @@ class TestParseIntelligentInput:
         root, files = sample_files
         result = parse_intelligent_input("read main documentation", files, root)
         assert result == []
+
 
 class TestFilterFilesByPaths:
     """Tests for filter_files_by_paths function."""
@@ -506,9 +508,7 @@ class TestForceIgnoredTraversal:
             force_ignored_paths=[str(requested)],
         )
 
-        assert [item.rel_path.as_posix() for item in files] == [
-            ".gen_files/requested/include.txt"
-        ]
+        assert [item.rel_path.as_posix() for item in files] == [".gen_files/requested/include.txt"]
 
     def test_force_ignored_does_not_bypass_secret_safety(self, tmp_path):
         generated = tmp_path / ".gen_files" / "requested"
@@ -522,9 +522,7 @@ class TestForceIgnoredTraversal:
             force_ignored_paths=[str(generated)],
         )
 
-        assert [item.rel_path.as_posix() for item in files] == [
-            ".gen_files/requested/safe.txt"
-        ]
+        assert [item.rel_path.as_posix() for item in files] == [".gen_files/requested/safe.txt"]
         assert sum(skipped.values()) == 1
 
 
@@ -549,9 +547,7 @@ def test_expand_explicit_path_inputs_splits_quoted_existing_directories(tmp_path
 class TestFinalSetExclusions:
     def test_excludes_folder_and_normalized_formats(self, sample_files):
         root, files = sample_files
-        kept, paths, formats = exclude_files(
-            files, root, ["docs"], ["py", "*.PY", ".py"]
-        )
+        kept, paths, formats = exclude_files(files, root, ["docs"], ["py", "*.PY", ".py"])
         assert [item.rel_path.as_posix() for item in kept] == ["README.md"]
         assert paths == ["docs/guide.md/index.md"]
         assert formats == [".py"]
@@ -614,3 +610,24 @@ def test_scan_supports_gzip_as_base64_with_original_hash(tmp_path):
     assert base64.b64decode("".join(source.lines)) == archive.read_bytes()
     assert source.size_bytes == len(archive.read_bytes())
     assert source.sha256 == hashlib.sha256(archive.read_bytes()).hexdigest()
+
+
+def test_scan_supports_pdf_as_base64_with_original_hash(tmp_path):
+    """PDF bytes are preserved as Base64 for readable text bundles."""
+    import base64
+    import hashlib
+
+    content = b"%PDF-1.7\n\x00binary-pdf-content\n%%EOF\n"
+    pdf = tmp_path / "report.pdf"
+    pdf.write_bytes(content)
+
+    files, skipped = scan_supported_files(tmp_path, skip_secret_files=True)
+
+    assert skipped.get("binary", 0) == 0
+    assert len(files) == 1
+    source = files[0]
+    assert source.rel_path == Path("report.pdf")
+    assert source.encoding == "base64"
+    assert base64.b64decode("".join(source.lines)) == content
+    assert source.size_bytes == len(content)
+    assert source.sha256 == hashlib.sha256(content).hexdigest()

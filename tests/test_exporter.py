@@ -449,9 +449,7 @@ def test_text_transport_remains_available(tmp_path):
     root.mkdir()
     (root / "app.py").write_text("print('hello')\n")
     out = tmp_path / "out"
-    CodeExporter().export(
-        project_root=root, output_dir=out, interactive=False, transport="text"
-    )
+    CodeExporter().export(project_root=root, output_dir=out, interactive=False, transport="text")
     assert list(out.glob("*_bundle_*.txt"))
     assert list(out.glob("*_context_*.tar.gz")) == []
 
@@ -470,3 +468,83 @@ def test_prompt_helpers_select_transport_specific_files(tmp_path, monkeypatch):
     assert writing.get_baic_prompt_md_content("TASK", "tar-gz") == "gzip TASK"
     assert writing.prompt_output_name_for_transport("text") == "baic_prompt_text.md"
     assert writing.prompt_output_name_for_transport("tar-gz") == "baic_prompt_gzip.md"
+
+
+def test_large_pdf_in_tar_gz_is_preserved_and_reported(tmp_path, capsys):
+    """Compressed transport reports PDFs over 15 MiB and preserves exact bytes."""
+    import base64
+    import io
+    import json
+    import tarfile
+
+    root = tmp_path / "project"
+    root.mkdir()
+    pdf = root / "large.pdf"
+    content = b"%PDF-1.7\n" + (b"x" * (15 * 1024 * 1024)) + b"\n%%EOF\n"
+    pdf.write_bytes(content)
+    out = tmp_path / "out"
+
+    CodeExporter().export(
+        project_root=root,
+        output_dir=out,
+        interactive=False,
+        transport="tar-gz",
+    )
+
+    manifest_path = next(out.glob("*_manifest_*.json"))
+    manifest = json.loads(manifest_path.read_text())
+    warning = next(
+        item for item in manifest["warnings"] if item["reason"] == "large_pdf_in_compressed_payload"
+    )
+    assert warning["path"] == "large.pdf"
+    assert warning["size_bytes"] == len(content)
+    assert warning["threshold_bytes"] == 15 * 1024 * 1024
+
+    payload = (out / manifest["transport"]["payload"]).read_bytes()
+    _, separator, body = payload.partition(b"\n\n")
+    assert separator
+    archive_bytes = base64.b64decode(b"".join(body.split()), validate=True)
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
+        assert archive.extractfile("large.pdf").read() == content
+
+    output = capsys.readouterr().out
+    assert "Large PDF in compressed payload: large.pdf" in output
+    assert "already-compressed PDFs may not shrink much" in " ".join(output.split())
+
+
+def test_text_transport_round_trips_pdf_bytes(tmp_path):
+    """Readable text transport Base64-wraps and reconstructs PDF bytes exactly."""
+    import base64
+    import json
+    import re
+
+    root = tmp_path / "project"
+    root.mkdir()
+    content = b"%PDF-1.7\n\x00binary-pdf-content\n%%EOF\n"
+    (root / "report.pdf").write_bytes(content)
+    out = tmp_path / "out"
+
+    CodeExporter().export(
+        project_root=root,
+        output_dir=out,
+        interactive=False,
+        transport="text",
+    )
+
+    manifest = json.loads(next(out.glob("*_manifest_*.json")).read_text())
+    entry = next(
+        item
+        for bundle in manifest["bundles"]
+        for item in bundle["files"]
+        if item["path"] == "report.pdf"
+    )
+    bundle_text = (out / manifest["bundles"][0]["bundle"]).read_text()
+    match = re.search(
+        r"===== BEGIN FILE: report\.pdf =====.*?^={60}\n(.*?)^={60}\n"
+        r"===== END FILE: report\.pdf",
+        bundle_text,
+        flags=re.DOTALL | re.MULTILINE,
+    )
+    assert match
+    assert entry["encoding"] == "base64"
+    assert base64.b64decode("".join(match.group(1).split()), validate=True) == content
