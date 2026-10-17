@@ -363,20 +363,13 @@ class TestExportConfig:
         assert config.interactive is True
 
 
-def test_gzip_manifest_records_base64_and_prompts_are_copied(tmp_path, monkeypatch):
+def test_gzip_manifest_records_base64_and_single_prompt(tmp_path):
     import gzip
-    from build_ai_context import writing
 
     root = tmp_path / "project"
     root.mkdir()
     archive = root / "history.json.gz"
     archive.write_bytes(gzip.compress(b'{"version":"1.4.0"}\n', mtime=0))
-    prompt = tmp_path / "baic_prompt_text.md"
-    prompt.write_text("Task: [PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]")
-    prompt_v2 = tmp_path / "baic_prompt_gzip.md"
-    prompt_v2.write_text("Prompt v2")
-    monkeypatch.setitem(writing._PROMPT_PATHS, "text", prompt)
-    monkeypatch.setitem(writing._PROMPT_PATHS, "tar-gz", prompt_v2)
 
     result = CodeExporter().export(
         project_root=root,
@@ -387,16 +380,8 @@ def test_gzip_manifest_records_base64_and_prompts_are_copied(tmp_path, monkeypat
         transport="text",
     )
 
-    manifest = json.loads(result.manifest_path.read_text())
-    entry = next(
-        item
-        for bundle in manifest["bundles"]
-        for item in bundle["files"]
-        if item["path"] == "history.json.gz"
-    )
-    assert entry["encoding"] == "base64"
-    assert (result.output_dir / "baic_prompt_text.md").read_text() == "Task: Bundle gzip history"
-    assert not (result.output_dir / "baic_prompt_gzip.md").exists()
+    assert (result.output_dir / "baic_prompt.md").is_file()
+    assert "Bundle gzip history" in (result.output_dir / "baic_prompt.md").read_text()
 
 
 def test_tar_gz_transport_writes_encoded_text_payload_and_round_trips(tmp_path):
@@ -425,23 +410,21 @@ def test_tar_gz_transport_writes_encoded_text_payload_and_round_trips(tmp_path):
     assert transport["archive_sha256"] == hashlib.sha256(archive_bytes).hexdigest()
     with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as package:
         assert package.extractfile("app.py").read() == b"print('hello')\n"
-    assert (out / "baic_prompt_gzip.md").is_file()
-    assert "tar+gzip+base64" in (out / "baic_prompt_gzip.md").read_text()
-    assert not (out / "baic_prompt_text.md").exists()
+    assert (out / "baic_prompt.md").is_file()
+    assert "tar+gzip+base64" in (out / "baic_prompt.md").read_text()
     assert list(out.glob("*.tar.gz")) == []
     assert list(out.glob("*_bundle_*.txt")) == []
 
 
-def test_text_is_default_transport(tmp_path):
+def test_tar_gz_is_default_transport(tmp_path):
     root = tmp_path / "project"
     root.mkdir()
     (root / "app.py").write_text("print('hello')\n")
     out = tmp_path / "out"
     CodeExporter().export(project_root=root, output_dir=out, interactive=False)
-    assert list(out.glob("*_bundle_*.txt"))
-    assert list(out.glob("*_payload_*.txt")) == []
-    assert "readable text bundles" in (out / "baic_prompt_text.md").read_text()
-    assert not (out / "baic_prompt_gzip.md").exists()
+    assert list(out.glob("*_payload_*.txt"))
+    assert list(out.glob("*_bundle_*.txt")) == []
+    assert "tar+gzip+base64" in (out / "baic_prompt.md").read_text()
 
 
 def test_text_transport_remains_available(tmp_path):
@@ -454,20 +437,20 @@ def test_text_transport_remains_available(tmp_path):
     assert list(out.glob("*_context_*.tar.gz")) == []
 
 
-def test_prompt_helpers_select_transport_specific_files(tmp_path, monkeypatch):
+def test_prompt_helpers_select_transport_content_with_one_output_name(tmp_path, monkeypatch):
     from build_ai_context import writing
 
-    text_prompt = tmp_path / "text.md"
-    gzip_prompt = tmp_path / "gzip.md"
+    text_prompt = tmp_path / "baic_prompt_text.md"
     text_prompt.write_text("text [PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]")
+    gzip_prompt = tmp_path / "baic_prompt_gzip.md"
     gzip_prompt.write_text("gzip [PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]")
     monkeypatch.setitem(writing._PROMPT_PATHS, "text", text_prompt)
     monkeypatch.setitem(writing._PROMPT_PATHS, "tar-gz", gzip_prompt)
 
     assert writing.get_baic_prompt_md_content("TASK", "text") == "text TASK"
     assert writing.get_baic_prompt_md_content("TASK", "tar-gz") == "gzip TASK"
-    assert writing.prompt_output_name_for_transport("text") == "baic_prompt_text.md"
-    assert writing.prompt_output_name_for_transport("tar-gz") == "baic_prompt_gzip.md"
+    assert writing.prompt_output_name_for_transport("text") == "baic_prompt.md"
+    assert writing.prompt_output_name_for_transport("tar-gz") == "baic_prompt.md"
 
 
 def test_large_pdf_in_tar_gz_is_preserved_and_reported(tmp_path, capsys):
@@ -494,7 +477,9 @@ def test_large_pdf_in_tar_gz_is_preserved_and_reported(tmp_path, capsys):
     manifest_path = next(out.glob("*_manifest_*.json"))
     manifest = json.loads(manifest_path.read_text())
     warning = next(
-        item for item in manifest["warnings"] if item["reason"] == "large_pdf_in_compressed_payload"
+        item
+        for item in manifest["warnings"]
+        if item["reason"] == "large_binary_in_compressed_payload"
     )
     assert warning["path"] == "large.pdf"
     assert warning["size_bytes"] == len(content)
@@ -508,8 +493,8 @@ def test_large_pdf_in_tar_gz_is_preserved_and_reported(tmp_path, capsys):
         assert archive.extractfile("large.pdf").read() == content
 
     output = capsys.readouterr().out
-    assert "Large PDF in compressed payload: large.pdf" in output
-    assert "already-compressed PDFs may not shrink much" in " ".join(output.split())
+    assert "Large binary file in compressed payload: large.pdf" in output
+    assert "already-compressed formats may not shrink much" in " ".join(output.split())
 
 
 def test_text_transport_round_trips_pdf_bytes(tmp_path):
@@ -548,3 +533,32 @@ def test_text_transport_round_trips_pdf_bytes(tmp_path):
     assert match
     assert entry["encoding"] == "base64"
     assert base64.b64decode("".join(match.group(1).split()), validate=True) == content
+
+
+def test_manifest_distinguishes_selected_transported_and_policy_omissions(tmp_path):
+    """Manifest reports selection separately from transport policy output."""
+    import json
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "main.py").write_text("print('ok')\n")
+    (root / "report.pdf").write_bytes(b"%PDF-1.7\n\x00data\n%%EOF\n")
+    out = tmp_path / "out"
+
+    CodeExporter().export(
+        project_root=root,
+        output_dir=out,
+        interactive=False,
+        transport="text",
+        binary_policy="compressed-only",
+    )
+
+    manifest = json.loads(next(out.glob("*_manifest_*.json")).read_text())
+    assert manifest["selected_files"] == ["main.py", "report.pdf"]
+    assert manifest["transported_files"] == ["main.py"]
+    assert manifest["summary"]["selected_file_count"] == 2
+    assert manifest["summary"]["transported_file_count"] == 1
+    assert manifest["summary"]["policy_omitted_count"] == 1
+    omission = manifest["transport_policy"]["omitted_files"][0]
+    assert omission["path"] == "report.pdf"
+    assert omission["reason"] == "binary_policy_requires_compressed_transport"

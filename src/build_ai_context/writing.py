@@ -28,22 +28,16 @@ from build_ai_context.constants import (
 )
 from build_ai_context.models import FileChunk, SourceFile
 
-_TEXT_PROMPT_PATH = Path(__file__).parent / "baic_prompt_text.md"
-_ENCODED_PROMPT_PATH = Path(__file__).parent / "baic_prompt_gzip.md"
 _PROMPT_PATHS = {
-    "text": _TEXT_PROMPT_PATH,
-    "tar-gz": _ENCODED_PROMPT_PATH,
+    "text": Path(__file__).parent / "baic_prompt_text.md",
+    "tar-gz": Path(__file__).parent / "baic_prompt_gzip.md",
 }
-_PROMPT_OUTPUT_NAMES = {
-    "text": "baic_prompt_text.md",
-    "tar-gz": "baic_prompt_gzip.md",
-}
-_BAIC_PROMPT_MD_PATH = _TEXT_PROMPT_PATH
+_PROMPT_OUTPUT_NAME = "baic_prompt.md"
 _TASK_PLACEHOLDER = "[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]"
 
 
 def prompt_path_for_transport(transport: str) -> Path:
-    """Return the packaged prompt matching the selected transport."""
+    """Return the single packaged prompt used by the three-attachment workflow."""
     try:
         return _PROMPT_PATHS[transport]
     except KeyError as exc:
@@ -51,25 +45,23 @@ def prompt_path_for_transport(transport: str) -> Path:
 
 
 def prompt_output_name_for_transport(transport: str) -> str:
-    """Return the generated prompt filename matching the selected transport."""
-    try:
-        return _PROMPT_OUTPUT_NAMES[transport]
-    except KeyError as exc:
-        raise ValueError("transport must be 'tar-gz' or 'text'") from exc
+    """Return the stable generated prompt filename for every transport."""
+    if transport not in {"tar-gz", "text"}:
+        raise ValueError("transport must be 'tar-gz' or 'text'")
+    return _PROMPT_OUTPUT_NAME
 
 
 def get_baic_prompt_md_content(
-    task: Optional[str] = None, transport: str = "text"
+    task: Optional[str] = None, transport: str = "tar-gz"
 ) -> str:
-    """Return the transport-specific prompt with an optional task replacement."""
+    """Return the single agent prompt with an optional task replacement."""
     prompt_path = prompt_path_for_transport(transport)
-    if not prompt_path.exists():
+    if not prompt_path.is_file():
         return ""
     content = prompt_path.read_text(encoding="utf-8")
     if task is None:
         return content
     return content.replace(_TASK_PLACEHOLDER, task, 1)
-
 
 def detect_dependency_files(all_files: Sequence[SourceFile]) -> List[str]:
     """Detect common dependency/config files in the project."""
@@ -249,12 +241,18 @@ def write_bundles_and_manifest(
     warnings: Sequence[Dict[str, object]] = (),
     task: Optional[str] = None,
     transport: str = "text",
+    transport_files: Optional[Sequence[SourceFile]] = None,
+    binary_policy: str = "include",
+    policy_omissions: Sequence[Dict[str, object]] = (),
 ) -> Path:
     """Write bundles and manifest to the output directory."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    if transport_files is None:
+        transport_files = selected_files
+
     source_lookup: Dict[str, SourceFile] = {
-        item.rel_path.as_posix(): item for item in selected_files
+        item.rel_path.as_posix(): item for item in transport_files
     }
 
     manifest: Dict[str, object] = {
@@ -267,11 +265,20 @@ def write_bundles_and_manifest(
         "skip_secret_like_files": skip_secret_files,
         "selection": selection_metadata,
         "selected_files": [item.rel_path.as_posix() for item in selected_files],
+        "transported_files": [item.rel_path.as_posix() for item in transport_files],
+        "transport_policy": {
+            "transport": transport,
+            "binary_policy": binary_policy,
+            "omitted_files": list(policy_omissions),
+        },
         "filetree": filetree_name,
         "summary": {
             "selected_file_count": len(selected_files),
             "selected_total_lines": sum(item.line_count for item in selected_files),
             "selected_total_bytes": sum(item.size_bytes for item in selected_files),
+            "transported_file_count": len(transport_files),
+            "transported_total_bytes": sum(item.size_bytes for item in transport_files),
+            "policy_omitted_count": len(policy_omissions),
             "skipped_counts": skipped_reasons,
             "skipped_during_pack_count": len(skipped_during_pack),
             "warning_count": len(warnings),
@@ -307,20 +314,25 @@ def write_bundles_and_manifest(
     # Expose one prompt whose extractor matches the selected transport.
     (output_dir / prompt_output_name).write_text(prompt_content, encoding="utf-8")
     if transport == "tar-gz":
-        included_paths: Set[str] = {
-            chunk.rel_path.as_posix() for bundle in bundles for chunk in bundle
-        }
+        included_paths: Set[str] = {item.rel_path.as_posix() for item in transport_files}
         archive_name = f"{folder_name}_context_{timestamp}.tar.gz"
         archive_path = output_dir / archive_name
         with archive_path.open("wb") as raw_output:
             with gzip.GzipFile(filename="", mode="wb", fileobj=raw_output, mtime=0) as gz_output:
-                with tarfile.open(fileobj=gz_output, mode="w", format=tarfile.PAX_FORMAT) as archive:
-                    for source in sorted(selected_files, key=lambda item: item.rel_path.as_posix()):
+                with tarfile.open(
+                    fileobj=gz_output, mode="w", format=tarfile.PAX_FORMAT
+                ) as archive:
+                    for source in sorted(
+                        transport_files, key=lambda item: item.rel_path.as_posix()
+                    ):
                         rel_path = source.rel_path.as_posix()
                         if rel_path not in included_paths:
                             continue
                         data = source.abs_path.read_bytes()
-                        if len(data) != source.size_bytes or hashlib.sha256(data).hexdigest() != source.sha256:
+                        if (
+                            len(data) != source.size_bytes
+                            or hashlib.sha256(data).hexdigest() != source.sha256
+                        ):
                             raise ValueError(f"Source changed during export: {rel_path}")
                         info = tarfile.TarInfo(rel_path)
                         info.size = len(data)
@@ -332,8 +344,7 @@ def write_bundles_and_manifest(
         archive_bytes = archive_path.read_bytes()
         payload_body = __import__("base64").b64encode(archive_bytes).decode("ascii")
         wrapped_body = "\n".join(
-            payload_body[index:index + 76]
-            for index in range(0, len(payload_body), 76)
+            payload_body[index : index + 76] for index in range(0, len(payload_body), 76)
         )
         payload_name = f"{folder_name}_payload_{timestamp}.txt"
         payload_header = (
@@ -365,34 +376,37 @@ def write_bundles_and_manifest(
             for source in sorted(selected_files, key=lambda item: item.rel_path.as_posix())
             if source.rel_path.as_posix() in included_paths
         ]
-        manifest.update({
-            "schema_version": 3,
-            "selected_files": [entry["path"] for entry in entries],
-            "summary": {
-                **manifest["summary"],
-                "selected_file_count": len(entries),
-                "selected_total_lines": sum(
-                    source.line_count for source in selected_files
-                    if source.rel_path.as_posix() in included_paths
-                ),
-                "selected_total_bytes": sum(entry["size_bytes"] for entry in entries),
-            },
-            "transport": {
-                "format": "tar+gzip+base64",
-                "payload": payload_name,
-                "payload_size_bytes": len(payload_bytes),
-                "payload_sha256": hashlib.sha256(payload_bytes).hexdigest(),
-                "base64_body_size_bytes": len(payload_body.encode("ascii")),
-                "base64_body_sha256": hashlib.sha256(payload_body.encode("ascii")).hexdigest(),
-                "archive_name": archive_name,
-                "archive_size_bytes": len(archive_bytes),
-                "archive_sha256": hashlib.sha256(archive_bytes).hexdigest(),
-                "deterministic": True,
-            },
-            "archive_entries": entries,
-            "bundle_count": 0,
-            "bundles": [],
-        })
+        manifest.update(
+            {
+                "schema_version": 3,
+                "selected_files": [entry["path"] for entry in entries],
+                "summary": {
+                    **manifest["summary"],
+                    "selected_file_count": len(entries),
+                    "selected_total_lines": sum(
+                        source.line_count
+                        for source in selected_files
+                        if source.rel_path.as_posix() in included_paths
+                    ),
+                    "selected_total_bytes": sum(entry["size_bytes"] for entry in entries),
+                },
+                "transport": {
+                    "format": "tar+gzip+base64",
+                    "payload": payload_name,
+                    "payload_size_bytes": len(payload_bytes),
+                    "payload_sha256": hashlib.sha256(payload_bytes).hexdigest(),
+                    "base64_body_size_bytes": len(payload_body.encode("ascii")),
+                    "base64_body_sha256": hashlib.sha256(payload_body.encode("ascii")).hexdigest(),
+                    "archive_name": archive_name,
+                    "archive_size_bytes": len(archive_bytes),
+                    "archive_sha256": hashlib.sha256(archive_bytes).hexdigest(),
+                    "deterministic": True,
+                },
+                "archive_entries": entries,
+                "bundle_count": 0,
+                "bundles": [],
+            }
+        )
         manifest_name = f"{folder_name}_manifest_{timestamp}.json"
         manifest_path = output_dir / manifest_name
         manifest_path.write_text(

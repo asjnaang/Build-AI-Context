@@ -13,6 +13,7 @@ from build_ai_context.constants import (
     LARGE_FILE_SKIP_LINES,
     LARGE_FILE_WARN_LINES,
 )
+from build_ai_context.formats import policy_for_path
 from build_ai_context.models import FileChunk, SourceFile
 from build_ai_context.redact import redact_text
 
@@ -231,8 +232,9 @@ def split_into_chunks(
         if total_lines == 0:
             continue
 
+        format_policy = policy_for_path(source.rel_path)
         # Check if file exceeds skip threshold (0 = disabled / unlimited)
-        if source.encoding == "text" and skip_threshold > 0 and total_lines >= skip_threshold:
+        if format_policy.line_limits_apply and skip_threshold > 0 and total_lines >= skip_threshold:
             skipped.append(
                 {
                     "path": source.rel_path.as_posix(),
@@ -244,7 +246,7 @@ def split_into_chunks(
             continue
 
         # Warn for large files that are still included
-        if source.encoding == "text" and total_lines >= LARGE_FILE_WARN_LINES:
+        if format_policy.line_limits_apply and total_lines >= LARGE_FILE_WARN_LINES:
             skipped.append(
                 {
                     "path": source.rel_path.as_posix(),

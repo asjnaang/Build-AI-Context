@@ -24,9 +24,9 @@ from build_ai_context.constants import (
     DEFAULT_SECRET_PATTERNS,
     DEFAULT_TEXT_ENCODING,
     EXTRA_EXCLUDED_PATTERNS,
-    BASE64_BINARY_EXTENSIONS,
     SPECIAL_FILENAMES,
 )
+from build_ai_context.formats import policy_for_path
 from build_ai_context.models import SourceFile
 
 
@@ -235,14 +235,14 @@ def scan_supported_files(
             if not category:
                 skipped_reasons["unsupported_type"] += 1
                 continue
-            is_base64_binary = path.suffix.lower() in BASE64_BINARY_EXTENSIONS
+            format_policy = policy_for_path(path)
             binary = is_probably_binary(path)
-            if binary and not is_base64_binary:
+            if binary and format_policy.content_kind != "binary":
                 skipped_reasons["binary"] += 1
                 continue
             try:
-                encoding = "base64" if is_base64_binary else "text"
-                lines = read_binary_lines(path) if is_base64_binary else read_text_lines(path)
+                encoding = format_policy.scanner_encoding
+                lines = read_binary_lines(path) if encoding == "base64" else read_text_lines(path)
                 raw_bytes = path.read_bytes()
                 size_bytes = len(raw_bytes)
                 sha256 = hashlib.sha256(raw_bytes).hexdigest()

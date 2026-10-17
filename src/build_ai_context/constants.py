@@ -16,11 +16,6 @@ DEFAULT_TEXT_ENCODING: str = "utf-8"
 # LARGE_FILE_SKIP_LINES is the default for --max-file-lines (CLI-overridable).
 LARGE_FILE_WARN_LINES: int = 1500
 LARGE_FILE_SKIP_LINES: int = 3000
-LARGE_BINARY_FILE_WARN_BYTES: int = 15 * 1024 * 1024
-
-# Binary formats that must be Base64-wrapped for readable text bundles.
-BASE64_BINARY_EXTENSIONS: Set[str] = {".gz", ".pdf"}
-
 # Category extensions mapping
 CATEGORY_EXTENSIONS: Dict[str, Set[str]] = {
     "python": {".py"},
