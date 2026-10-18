@@ -18,6 +18,7 @@ class FormatPolicy:
     redactable: bool = True
     text_transport_supported: bool = True
     compressed_transport_supported: bool = True
+    reconstruction_strategy: str = "utf-8-text"
     size_warning_bytes: Optional[int] = None
 
 
@@ -30,6 +31,7 @@ FORMAT_POLICIES: Dict[str, FormatPolicy] = {
         scanner_encoding="base64",
         line_limits_apply=False,
         redactable=False,
+        reconstruction_strategy="base64-decode",
     ),
     ".pdf": FormatPolicy(
         extension=".pdf",
@@ -37,6 +39,7 @@ FORMAT_POLICIES: Dict[str, FormatPolicy] = {
         scanner_encoding="base64",
         line_limits_apply=False,
         redactable=False,
+        reconstruction_strategy="base64-decode",
         size_warning_bytes=BINARY_SIZE_WARNING_BYTES,
     ),
 }

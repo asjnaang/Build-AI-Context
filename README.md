@@ -111,14 +111,31 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `--all` | Export everything supported without prompts | `baic . --all` |
 | `--max-file-lines` | Skip repo source files with ≥ N lines when bundling (default: 3000; `0` = no limit). Bundle output size stays fixed at 8000 lines. | `--max-file-lines 10000` |
 | `--force-ignored` | Include supported files under explicit `--paths` even when ignored; secret-like files still require `--include-secret-files` | `--paths .gen_files/reports --force-ignored` |
+| `--force-include-formats` | Include otherwise unsupported extensions in `tar-gz` transport; accepts `rs`, `.rs`, or `*.rs` | `--force-include-formats .rs .sqlite3` |
 | `--force-bundle` | Bundle selected files regardless of the per-file line limit; oversized JSON is sampled when possible | `--paths reports --force-bundle` |
 | `--transport` | `tar-gz` (default) or readable `text` bundles | `--transport text` |
+| `--split` | Split `tar-gz` transport into deterministic payloads capped at 18 MiB each | `--split` |
 | `--binary-policy` | `include` (default), `skip`, or `compressed-only` | `--binary-policy compressed-only` |
 | `--output-dir` | Custom output folder | `--output-dir ./my-bundles` |
 | `--project-overview` | Generate architecture overview | `--project-overview` |
 | `--include-secret-files` | Include .env, keys, etc. (careful!) | `--include-secret-files` |
 | `--redact` | Redact secrets from output | `--redact` |
 | `--version` | Show version | `--version` |
+
+### Including project-specific formats
+
+Use `--force-include-formats` when a project contains extensions that are not in the built-in
+category registry and the output uses the default `tar-gz` transport:
+
+```bash
+baic . --all --force-include-formats .rs .sqlite3
+```
+
+The override is intentionally rejected with `--transport text`. Compressed transport preserves
+the original bytes, while readable text bundles would need a stable text or binary representation
+policy. Existing ignore rules, secret-file protection, and explicit exclusions still apply. A forced
+binary file is detected and represented internally as Base64, then archived from its original byte
+snapshot.
 
 ## Categories Supported
 

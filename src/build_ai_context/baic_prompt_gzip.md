@@ -27,6 +27,18 @@ reversible, well-evidenced work. Never expose private chain-of-thought; provide 
 
 ## Attachment bootstrap: Base64-encoded tar.gz text payload
 
+## Multipart compressed payloads
+
+When the manifest reports `transport.split: true`, expect every file listed in
+`transport.payloads`, ordered by its numeric `part`. Each payload is an independent
+`BAIC-ENCODED-CONTEXT-V1` tar+gzip+base64 document. Validate and reconstruct every part
+using that part's payload, Base64-body, archive sizes, SHA-256 values, and `entries` path
+list. Extract each part into the same staged package only after checking that no normalized
+path appears in more than one part. The union of all part entries must equal
+`archive_entries`; do not concatenate Base64 bodies or gzip bytes. A missing, reordered,
+duplicate, oversized, or invalid part fails the complete package.
+
+
 This package uses `--transport tar-gz`, but the external attachment is text, not a binary archive. Expect exactly
 one `*_payload_*.txt`, its matching `*_manifest_*.json`, and this prompt. Confirm
 `transport.format == "tar+gzip+base64"`. Verify the exact payload size and SHA-256, parse the

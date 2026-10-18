@@ -61,9 +61,7 @@ class FileFacts:
     error: Optional[str] = None
 
 
-def generate_graph(
-    files: Sequence[SourceFile], root: Path, output_format: str = "txt"
-) -> str:
+def generate_graph(files: Sequence[SourceFile], root: Path, output_format: str = "txt") -> str:
     """Generate a catalog + imports graph that AI agents can parse."""
     fmt = (output_format or "txt").strip().lower()
     if fmt not in {"txt", "json"}:
@@ -216,10 +214,18 @@ def _treesitter_parser(suffix: str):
         return None, None
 
 
-def _walk_treesitter(node, src: bytes, symbols: List[Symbol], imports: List[str], parent_class: Optional[str]) -> None:
+def _walk_treesitter(
+    node, src: bytes, symbols: List[Symbol], imports: List[str], parent_class: Optional[str]
+) -> None:
     ntype = node.type
 
-    if ntype in {"import_statement", "import_from_statement", "import_header", "import_declaration", "import_or_export"}:
+    if ntype in {
+        "import_statement",
+        "import_from_statement",
+        "import_header",
+        "import_declaration",
+        "import_or_export",
+    }:
         target = _import_target_from_node(node, src)
         if target:
             imports.append(target)
@@ -462,9 +468,13 @@ def _heuristic_js_symbols(text: str) -> List[Symbol]:
         re.MULTILINE,
     ):
         symbols.append(Symbol("fn", match.group(1), _line_at(text, match.start())))
-    for match in re.finditer(r"^\s*(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)", text, re.MULTILINE):
+    for match in re.finditer(
+        r"^\s*(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)", text, re.MULTILINE
+    ):
         symbols.append(Symbol("interface", match.group(1), _line_at(text, match.start())))
-    for match in re.finditer(r"^\s*(?:export\s+)?type\s+([A-Za-z_$][\w$]*)\s*=", text, re.MULTILINE):
+    for match in re.finditer(
+        r"^\s*(?:export\s+)?type\s+([A-Za-z_$][\w$]*)\s*=", text, re.MULTILINE
+    ):
         symbols.append(Symbol("type", match.group(1), _line_at(text, match.start())))
     return symbols
 
@@ -476,8 +486,14 @@ def _heuristic_import_lines(text: str, pattern: str) -> List[str]:
 def _heuristic_kotlin_symbols(text: str) -> List[Symbol]:
     symbols: List[Symbol] = []
     current_class: Optional[str] = None
+    class_depth: Optional[int] = None
+    brace_depth = 0
     for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
+        closing = line.count("}")
+        if current_class and class_depth is not None and brace_depth - closing < class_depth:
+            current_class = None
+            class_depth = None
         class_match = re.match(
             r"(?:(?:public|private|internal|protected|open|data|sealed|abstract)\s+)*"
             r"(class|object|interface|enum\s+class)\s+([A-Za-z_][\w]*)",
@@ -486,23 +502,35 @@ def _heuristic_kotlin_symbols(text: str) -> List[Symbol]:
         if class_match:
             kind = "enum" if "enum" in class_match.group(1) else class_match.group(1)
             current_class = class_match.group(2)
+            class_depth = brace_depth
             symbols.append(Symbol(kind, current_class, lineno))
-            continue
-        fn_match = re.match(r"(?:(?:public|private|internal|protected|override|suspend)\s+)*fun\s+([A-Za-z_][\w]*)\s*\(", line)
-        if fn_match:
-            name = fn_match.group(1)
-            if current_class:
-                symbols.append(Symbol("method", f"{current_class}.{name}", lineno))
-            else:
-                symbols.append(Symbol("fn", name, lineno))
+        else:
+            fn_match = re.match(
+                r"(?:(?:public|private|internal|protected|override|suspend)\s+)*"
+                r"fun\s+([A-Za-z_][\w]*)\s*\(",
+                line,
+            )
+            if fn_match:
+                name = fn_match.group(1)
+                if current_class:
+                    symbols.append(Symbol("method", f"{current_class}.{name}", lineno))
+                else:
+                    symbols.append(Symbol("fn", name, lineno))
+        brace_depth += line.count("{") - closing
     return symbols
 
 
 def _heuristic_swift_symbols(text: str) -> List[Symbol]:
     symbols: List[Symbol] = []
     current: Optional[Tuple[str, str]] = None
+    type_depth: Optional[int] = None
+    brace_depth = 0
     for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
+        closing = line.count("}")
+        if current and type_depth is not None and brace_depth - closing < type_depth:
+            current = None
+            type_depth = None
         type_match = re.match(
             r"(?:(?:public|private|internal|open|final|fileprivate)\s+)*"
             r"(class|struct|enum|protocol|actor)\s+([A-Za-z_][\w]*)",
@@ -510,18 +538,21 @@ def _heuristic_swift_symbols(text: str) -> List[Symbol]:
         )
         if type_match:
             current = (type_match.group(1), type_match.group(2))
+            type_depth = brace_depth
             symbols.append(Symbol(current[0], current[1], lineno))
-            continue
-        fn_match = re.match(
-            r"(?:(?:public|private|internal|open|override|static|mutating)\s+)*func\s+([A-Za-z_][\w]*)\s*\(",
-            line,
-        )
-        if fn_match:
-            name = fn_match.group(1)
-            if current and current[0] != "protocol":
-                symbols.append(Symbol("method", f"{current[1]}.{name}", lineno))
-            else:
-                symbols.append(Symbol("fn", name, lineno))
+        else:
+            fn_match = re.match(
+                r"(?:(?:public|private|internal|open|override|static|mutating)\s+)*"
+                r"func\s+([A-Za-z_][\w]*)\s*\(",
+                line,
+            )
+            if fn_match:
+                name = fn_match.group(1)
+                if current and current[0] != "protocol":
+                    symbols.append(Symbol("method", f"{current[1]}.{name}", lineno))
+                else:
+                    symbols.append(Symbol("fn", name, lineno))
+        brace_depth += line.count("{") - closing
     return symbols
 
 
@@ -544,7 +575,11 @@ def _heuristic_java_symbols(text: str) -> List[Symbol]:
             r"(?:[\w.<>,\[\]?]+\s+)+([A-Za-z_][\w]*)\s*\(",
             line,
         )
-        if method_match and current and method_match.group(1) not in {current, "if", "for", "while", "switch"}:
+        if (
+            method_match
+            and current
+            and method_match.group(1) not in {current, "if", "for", "while", "switch"}
+        ):
             symbols.append(Symbol("method", f"{current}.{method_match.group(1)}", lineno))
     return symbols
 
@@ -571,9 +606,7 @@ def _line_at(text: str, index: int) -> int:
     return text.count("\n", 0, index) + 1
 
 
-def _collect_imports(
-    facts: Sequence[FileFacts], path_set: Set[str]
-) -> List[Tuple[str, str, bool]]:
+def _collect_imports(facts: Sequence[FileFacts], path_set: Set[str]) -> List[Tuple[str, str, bool]]:
     rows: List[Tuple[str, str, bool]] = []
     for item in sorted(facts, key=lambda f: f.path):
         for raw in item.imports:
