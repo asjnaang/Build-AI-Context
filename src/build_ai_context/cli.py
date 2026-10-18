@@ -31,6 +31,15 @@ from build_ai_context.exporter import CodeExporter
 from build_ai_context.models import SourceFile
 from build_ai_context.planning import build_export_plan
 from build_ai_context.scanner import expand_explicit_path_inputs
+
+
+class ExportAllAction(argparse.Action):
+    """Enable non-interactive export while retaining an explicit all-files intent."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        del parser, values, option_string
+        setattr(namespace, self.dest, True)
+        setattr(namespace, "non_interactive", True)
 from build_ai_context.update_source_file_headers import DEFAULT_EXCLUDES, walk_and_update
 
 
@@ -127,9 +136,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--all",
-        dest="non_interactive",
-        action="store_true",
-        help="Export all supported files without prompts.",
+        dest="select_all",
+        action=ExportAllAction,
+        nargs=0,
+        default=False,
+        help=(
+            "Export all normally discoverable supported files without prompts. Explicit "
+            "--paths are additive; with --force-ignored, only ignored files under those "
+            "paths are additionally included."
+        ),
     )
     parser.add_argument(
         "--categories",
@@ -387,7 +402,18 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         exporter.print_info(f"Detected {len(all_files)} supported file(s).")
 
         if args.non_interactive:
-            if args.keywords:
+            if args.select_all:
+                selected_files = list(all_files)
+                selection_metadata = {
+                    "selection_mode": "all",
+                    "selected_categories": [],
+                    "selected_paths": exporter._normalize_selection_paths(
+                        expand_explicit_path_inputs(args.paths, root), root
+                    ),
+                    "name_filters": [],
+                    "missing_paths": [],
+                }
+            elif args.keywords:
                 matched_files, matched_keywords = exporter.filter_files_by_keywords(
                     all_files, args.keywords
                 )

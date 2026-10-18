@@ -23,6 +23,9 @@ baic
 # Non-interactive - export everything supported
 baic . --all
 
+# Export normal project files plus explicitly requested ignored/generated paths
+baic . --all --force-ignored --paths outputs/knowledge outputs/latest-run
+
 # Non-interactive - export specific categories
 baic . --non-interactive --categories python typescript
 ```
@@ -69,6 +72,11 @@ baic . --non-interactive --paths "main.py utils.py, helpers.py"
 
 The tool intelligently parses paths even if you mix commas and spaces or omit separators.
 
+When `--all` and `--paths` are combined, `--all` selects every normally discoverable supported file and
+`--paths` supplies additional explicit locations. Ignored/default-excluded content is added only when
+`--force-ignored` is also present, and that bypass is restricted to the supplied paths. Unrelated ignored
+content remains excluded. `--exclude-paths` and `--exclude-formats` still remove files from the final set.
+
 ### 4) mixed - Categories + Paths + Name Filters
 Combine categories, paths, and filename filters:
 
@@ -101,6 +109,7 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `--graph` | Generate code graph only (catalog + imports), exit | `baic --graph .` |
 | `--format` | Graph file format: `txt` (default) or `json` | `--graph --format json` |
 | `--categories` | Export by category | `--categories python typescript` |
+| `--all` | Export all normally discoverable files; explicit `--paths` remain additive | `--all --force-ignored --paths outputs/run` |
 | `--paths` | Export by path/filename | `--paths src tests` |
 | `--keywords` | Search in code content | `--keywords TODO FIXME` |
 | `--exclude-paths` | Remove files/folders from the final selected set | `--exclude-paths tests fixtures` |

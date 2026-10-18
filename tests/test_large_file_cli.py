@@ -27,6 +27,7 @@ def _source(tmp_path: Path, name: str, line_count: int) -> SourceFile:
 def test_all_flag_enables_non_interactive_export():
     args = build_parser().parse_args(["--all"])
     assert args.non_interactive is True
+    assert args.select_all is True
     assert args.categories == []
     assert args.paths == []
     assert args.keywords == []
@@ -607,3 +608,71 @@ def test_exclude_formats_precedes_force_include_and_final_bundling(tmp_path):
     archive_bytes = base64.b64decode(b"".join(body.split()), validate=True)
     with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
         assert archive.getnames() == ["knowledge.sqlite3"]
+
+
+def test_all_with_paths_adds_only_explicit_ignored_content(tmp_path):
+    """--all keeps normal root files and force-includes only requested ignored paths."""
+    project = tmp_path / "project"
+    requested = project / "outputs" / "requested"
+    unrelated = project / "outputs" / "unrelated"
+    requested.mkdir(parents=True)
+    unrelated.mkdir(parents=True)
+    (project / ".gitignore").write_text("outputs/\n")
+    (project / "app.py").write_text("print('app')\n")
+    (project / "README.md").write_text("# Project\n")
+    (requested / "run.log").write_text("requested\n")
+    sqlite = requested / "knowledge.sqlite3"
+    sqlite.write_bytes(b"SQLite format 3\x00\x01")
+    (unrelated / "private.log").write_text("unrelated\n")
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project),
+        "--all",
+        "--force-ignored",
+        "--force-include-formats",
+        ".sqlite3",
+        "--paths",
+        str(requested),
+        "--output-dir",
+        str(output),
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    assert manifest["selected_files"] == [
+        "README.md",
+        "app.py",
+        "outputs/requested/knowledge.sqlite3",
+        "outputs/requested/run.log",
+    ]
+    assert "outputs/unrelated/private.log" not in manifest["selected_files"]
+    assert manifest["selection"]["selection_mode"] == "all"
+    assert manifest["selection"]["selected_paths"] == ["outputs/requested"]
+
+
+def test_all_with_paths_does_not_bypass_gitignore_without_force_ignored(tmp_path):
+    """--paths stay additive metadata unless --force-ignored explicitly authorizes bypass."""
+    project = tmp_path / "project"
+    ignored = project / "outputs" / "requested"
+    ignored.mkdir(parents=True)
+    (project / ".gitignore").write_text("outputs/\n")
+    (project / "app.py").write_text("print('app')\n")
+    (ignored / "run.log").write_text("ignored\n")
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project),
+        "--all",
+        "--paths",
+        str(ignored),
+        "--output-dir",
+        str(output),
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    assert manifest["selected_files"] == ["app.py"]
+    assert "outputs/requested/run.log" not in manifest["selected_files"]
