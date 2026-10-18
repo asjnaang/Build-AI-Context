@@ -507,3 +507,103 @@ def test_tar_gz_task_uses_gzip_prompt_name(tmp_path):
 
     assert result == 0
     assert task in (output / "baic_prompt.md").read_text()
+
+
+def test_force_include_formats_requires_tar_gz(tmp_path, capsys):
+    """Readable text transport rejects unknown-format overrides."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "main.rs").write_text("fn main() {}\n")
+    args = build_parser().parse_args([
+        str(project),
+        "--transport",
+        "text",
+        "--all",
+        "--force-include-formats",
+        ".rs",
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 1
+    assert "requires --transport tar-gz" in capsys.readouterr().err
+
+
+def test_force_include_formats_exports_original_bytes_in_tar_gz(tmp_path):
+    """Unknown binary formats are preserved exactly in compressed transport."""
+    import base64
+    import io
+    import json
+    import tarfile
+
+    project = tmp_path / "project"
+    project.mkdir()
+    content = b"SQLite format 3\x00\x01\x02"
+    (project / "cache.sqlite3").write_bytes(content)
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project),
+        "--transport",
+        "tar-gz",
+        "--all",
+        "--force-include-formats",
+        "sqlite3",
+        "--output-dir",
+        str(output),
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    manifest_path = next(output.glob("*_manifest_*.json"))
+    manifest = json.loads(manifest_path.read_text())
+    payload = output / manifest["transport"]["payload"]
+    _, body = payload.read_bytes().split(b"\n\n", 1)
+    archive_bytes = base64.b64decode(b"".join(body.split()), validate=True)
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
+        extracted = archive.extractfile("cache.sqlite3")
+        assert extracted is not None
+        assert extracted.read() == content
+    entry = next(item for item in manifest["archive_entries"] if item["path"] == "cache.sqlite3")
+    assert entry["content_kind"] == "binary"
+
+
+def test_exclude_formats_precedes_force_include_and_final_bundling(tmp_path):
+    """An excluded format never enters discovery or the compressed archive."""
+    import base64
+    import io
+    import json
+    import tarfile
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "page.html").write_text("<html>excluded</html>\n")
+    sqlite = project / "knowledge.sqlite3"
+    sqlite.write_bytes(b"SQLite format 3\x00\x01")
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project),
+        "--transport",
+        "tar-gz",
+        "--all",
+        "--force-include-formats",
+        ".sqlite3",
+        "--exclude-formats",
+        ".html",
+        "--output-dir",
+        str(output),
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    manifest_path = next(output.glob("*_manifest_*.json"))
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["selected_files"] == ["knowledge.sqlite3"]
+    assert manifest["selection"]["excluded_formats"] == [".html"]
+    assert manifest["summary"]["skipped_counts"]["excluded_format"] == 1
+    payload = output / manifest["transport"]["payload"]
+    _, body = payload.read_bytes().split(b"\n\n", 1)
+    archive_bytes = base64.b64decode(b"".join(body.split()), validate=True)
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
+        assert archive.getnames() == ["knowledge.sqlite3"]

@@ -23,6 +23,8 @@ class SourceFile:
     sha256: str
     lines: List[str] = field(repr=False)
     encoding: str = "text"
+    snapshot_bytes: Optional[bytes] = field(default=None, repr=False)
+    mode: Optional[int] = None
 
 
 @dataclass(frozen=True)

@@ -18,9 +18,10 @@ class TestVersion:
         assert __version__ is not None
 
     def test_version_format(self):
-        parts = __version__.split(".")
-        assert len(parts) >= 2
-        assert all(p.isdigit() for p in parts)
+        from packaging.version import Version
+
+        parsed = Version(__version__)
+        assert parsed.release[:2] >= (0, 0)
 
 
 class TestCategoryDetection:
@@ -134,20 +135,18 @@ class TestCategoryDetection:
     def test_detect_csv(self, tmp_path):
         f = tmp_path / "variables.csv"
         f.write_text(
-            'variableKey,description,valueOrReference\n'
+            "variableKey,description,valueOrReference\n"
             'app.product.productCategory,"Product category, captured at interaction",'
-            '<Refer to section 4.1>'
+            "<Refer to section 4.1>"
         )
         assert CodeExporter.detect_category(f) == "config_docs"
 
-        files, skipped = CodeExporter.scan_supported_files(
-            tmp_path, skip_secret_files=True
-        )
+        files, skipped = CodeExporter.scan_supported_files(tmp_path, skip_secret_files=True)
         assert skipped == {}
         assert files[0].lines == [
             "variableKey,description,valueOrReference",
             'app.product.productCategory,"Product category, captured at interaction",'
-            '<Refer to section 4.1>',
+            "<Refer to section 4.1>",
         ]
 
     def test_detect_unknown(self, tmp_path):
@@ -624,9 +623,7 @@ class TestLargeFileHandling:
         exporter = CodeExporter()
         files, _ = exporter.scan_supported_files(tmp_path, skip_secret_files=True)
 
-        chunks, skipped = exporter.split_into_chunks(
-            files, 8000, max_file_lines=10000
-        )
+        chunks, skipped = exporter.split_into_chunks(files, 8000, max_file_lines=10000)
 
         large_skips = [s for s in skipped if s.get("reason") == "large_file_exceeds_skip_threshold"]
         assert len(large_skips) == 0
@@ -654,9 +651,7 @@ class TestLargeFileHandling:
         exporter = CodeExporter()
         files, _ = exporter.scan_supported_files(tmp_path, skip_secret_files=True)
 
-        chunks, skipped = exporter.split_into_chunks(
-            files, 8000, max_file_lines=500
-        )
+        chunks, skipped = exporter.split_into_chunks(files, 8000, max_file_lines=500)
 
         large_skips = [s for s in skipped if s.get("reason") == "large_file_exceeds_skip_threshold"]
         assert len(large_skips) == 1

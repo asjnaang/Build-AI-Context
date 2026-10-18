@@ -28,6 +28,8 @@ from build_ai_context.constants import (
 )
 from build_ai_context.models import FileChunk, SourceFile
 
+GZIP_COMPRESSLEVEL = 1
+
 _PROMPT_PATHS = {
     "text": Path(__file__).parent / "baic_prompt_text.md",
     "tar-gz": Path(__file__).parent / "baic_prompt_gzip.md",
@@ -51,9 +53,7 @@ def prompt_output_name_for_transport(transport: str) -> str:
     return _PROMPT_OUTPUT_NAME
 
 
-def get_baic_prompt_md_content(
-    task: Optional[str] = None, transport: str = "tar-gz"
-) -> str:
+def get_baic_prompt_md_content(task: Optional[str] = None, transport: str = "tar-gz") -> str:
     """Return the single agent prompt with an optional task replacement."""
     prompt_path = prompt_path_for_transport(transport)
     if not prompt_path.is_file():
@@ -62,6 +62,7 @@ def get_baic_prompt_md_content(
     if task is None:
         return content
     return content.replace(_TASK_PLACEHOLDER, task, 1)
+
 
 def detect_dependency_files(all_files: Sequence[SourceFile]) -> List[str]:
     """Detect common dependency/config files in the project."""
@@ -244,6 +245,8 @@ def write_bundles_and_manifest(
     transport_files: Optional[Sequence[SourceFile]] = None,
     binary_policy: str = "include",
     policy_omissions: Sequence[Dict[str, object]] = (),
+    split: bool = False,
+    split_payload_max_bytes: int = 18 * 1024 * 1024,
 ) -> Path:
     """Write bundles and manifest to the output directory."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -314,54 +317,114 @@ def write_bundles_and_manifest(
     # Expose one prompt whose extractor matches the selected transport.
     (output_dir / prompt_output_name).write_text(prompt_content, encoding="utf-8")
     if transport == "tar-gz":
-        included_paths: Set[str] = {item.rel_path.as_posix() for item in transport_files}
-        archive_name = f"{folder_name}_context_{timestamp}.tar.gz"
-        archive_path = output_dir / archive_name
-        with archive_path.open("wb") as raw_output:
-            with gzip.GzipFile(filename="", mode="wb", fileobj=raw_output, mtime=0) as gz_output:
-                with tarfile.open(
-                    fileobj=gz_output, mode="w", format=tarfile.PAX_FORMAT
-                ) as archive:
-                    for source in sorted(
-                        transport_files, key=lambda item: item.rel_path.as_posix()
-                    ):
-                        rel_path = source.rel_path.as_posix()
-                        if rel_path not in included_paths:
-                            continue
-                        data = source.abs_path.read_bytes()
-                        if (
-                            len(data) != source.size_bytes
-                            or hashlib.sha256(data).hexdigest() != source.sha256
-                        ):
-                            raise ValueError(f"Source changed during export: {rel_path}")
-                        info = tarfile.TarInfo(rel_path)
+        sorted_sources = sorted(transport_files, key=lambda item: item.rel_path.as_posix())
+
+        def source_bytes(source: SourceFile) -> bytes:
+            data = source.snapshot_bytes
+            if data is None:
+                data = source.abs_path.read_bytes()
+                if len(data) != source.size_bytes or hashlib.sha256(data).hexdigest() != source.sha256:
+                    raise ValueError(f"Source changed during export: {source.rel_path.as_posix()}")
+            return data
+
+        def archive_bytes_for(sources: Sequence[SourceFile]) -> bytes:
+            output = io.BytesIO()
+            with gzip.GzipFile(
+                filename="", mode="wb", fileobj=output, mtime=0,
+                compresslevel=GZIP_COMPRESSLEVEL,
+            ) as gz_output:
+                with tarfile.open(fileobj=gz_output, mode="w", format=tarfile.PAX_FORMAT) as archive:
+                    for source in sources:
+                        data = source_bytes(source)
+                        info = tarfile.TarInfo(source.rel_path.as_posix())
                         info.size = len(data)
-                        info.mode = source.abs_path.stat().st_mode & 0o777
+                        info.mode = source.mode if source.mode is not None else 0o644
                         info.mtime = 0
                         info.uid = info.gid = 0
                         info.uname = info.gname = ""
                         archive.addfile(info, io.BytesIO(data))
-        archive_bytes = archive_path.read_bytes()
-        payload_body = __import__("base64").b64encode(archive_bytes).decode("ascii")
-        wrapped_body = "\n".join(
-            payload_body[index : index + 76] for index in range(0, len(payload_body), 76)
-        )
-        payload_name = f"{folder_name}_payload_{timestamp}.txt"
-        payload_header = (
-            "BAIC-ENCODED-CONTEXT-V1\n"
-            f"archive-name: {archive_name}\n"
-            "content-format: tar+gzip\n"
-            "transport-encoding: base64\n"
-            f"archive-size-bytes: {len(archive_bytes)}\n"
-            f"archive-sha256: {hashlib.sha256(archive_bytes).hexdigest()}\n"
-            f"base64-body-size-bytes: {len(payload_body.encode('ascii'))}\n"
-            f"base64-body-sha256: {hashlib.sha256(payload_body.encode('ascii')).hexdigest()}\n"
-            "\n"
-        )
-        payload_path = output_dir / payload_name
-        payload_path.write_text(payload_header + wrapped_body + "\n", encoding="ascii")
-        payload_bytes = payload_path.read_bytes()
-        archive_path.unlink()
+            return output.getvalue()
+
+        def payload_bytes_for(archive_name: str, archive_bytes: bytes) -> tuple[bytes, bytes]:
+            body = __import__("base64").b64encode(archive_bytes)
+            wrapped = b"\n".join(body[index : index + 76] for index in range(0, len(body), 76))
+            header = (
+                "BAIC-ENCODED-CONTEXT-V1\n"
+                f"archive-name: {archive_name}\n"
+                "content-format: tar+gzip\n"
+                "transport-encoding: base64\n"
+                f"archive-size-bytes: {len(archive_bytes)}\n"
+                f"archive-sha256: {hashlib.sha256(archive_bytes).hexdigest()}\n"
+                f"base64-body-size-bytes: {len(body)}\n"
+                f"base64-body-sha256: {hashlib.sha256(body).hexdigest()}\n\n"
+            ).encode("ascii")
+            return header + wrapped + b"\n", body
+
+        source_groups: List[List[SourceFile]] = [sorted_sources]
+        group_archives: List[bytes] = []
+        if split:
+            source_groups = []
+            start = 0
+            probe_name = f"{folder_name}_context_part_001_of_999_{timestamp}.tar.gz"
+            while start < len(sorted_sources):
+                low = start + 1
+                high = len(sorted_sources)
+                best_end = start
+                best_archive: Optional[bytes] = None
+                while low <= high:
+                    middle = (low + high) // 2
+                    candidate_archive = archive_bytes_for(sorted_sources[start:middle])
+                    candidate_payload, _ = payload_bytes_for(probe_name, candidate_archive)
+                    if len(candidate_payload) <= split_payload_max_bytes:
+                        best_end = middle
+                        best_archive = candidate_archive
+                        low = middle + 1
+                    else:
+                        high = middle - 1
+                if best_archive is None:
+                    source = sorted_sources[start]
+                    raise ValueError(
+                        f"File cannot fit in one {split_payload_max_bytes}-byte payload: "
+                        f"{source.rel_path.as_posix()}"
+                    )
+                source_groups.append(sorted_sources[start:best_end])
+                group_archives.append(best_archive)
+                start = best_end
+        else:
+            group_archives = [archive_bytes_for(sorted_sources)]
+
+        payload_records: List[Dict[str, object]] = []
+        entry_part_lookup: Dict[str, int] = {}
+        part_count = len(source_groups)
+        for part_index, (sources, archive_bytes) in enumerate(
+            zip(source_groups, group_archives), start=1
+        ):
+            suffix = f"_part_{part_index:03d}_of_{part_count:03d}" if split else ""
+            archive_name = f"{folder_name}_context{suffix}_{timestamp}.tar.gz"
+            payload_name = f"{folder_name}_payload{suffix}_{timestamp}.txt"
+            payload_bytes, body = payload_bytes_for(archive_name, archive_bytes)
+            if split and len(payload_bytes) > split_payload_max_bytes:
+                raise ValueError(f"Generated payload exceeds split limit: {payload_name}")
+            (output_dir / payload_name).write_bytes(payload_bytes)
+            paths = [source.rel_path.as_posix() for source in sources]
+            for path in paths:
+                entry_part_lookup[path] = part_index
+            payload_records.append(
+                {
+                    "part": part_index,
+                    "part_count": part_count,
+                    "payload": payload_name,
+                    "payload_size_bytes": len(payload_bytes),
+                    "payload_sha256": hashlib.sha256(payload_bytes).hexdigest(),
+                    "base64_body_size_bytes": len(body),
+                    "base64_body_sha256": hashlib.sha256(body).hexdigest(),
+                    "archive_name": archive_name,
+                    "archive_size_bytes": len(archive_bytes),
+                    "archive_sha256": hashlib.sha256(archive_bytes).hexdigest(),
+                    "entries": paths,
+                }
+            )
+
         entries = [
             {
                 "path": source.rel_path.as_posix(),
@@ -371,38 +434,32 @@ def write_bundles_and_manifest(
                 "transport_encoding": "identity",
                 "size_bytes": source.size_bytes,
                 "sha256": source.sha256,
-                "mode": source.abs_path.stat().st_mode & 0o777,
+                "mode": source.mode if source.mode is not None else 0o644,
+                "payload_part": entry_part_lookup[source.rel_path.as_posix()],
             }
-            for source in sorted(selected_files, key=lambda item: item.rel_path.as_posix())
-            if source.rel_path.as_posix() in included_paths
+            for source in sorted_sources
         ]
+        transport_details: Dict[str, object] = {
+            "format": "tar+gzip+base64",
+            "split": split,
+            "payload_count": part_count,
+            "payloads": payload_records,
+            "deterministic": True,
+        }
+        if not split:
+            transport_details.update({key: value for key, value in payload_records[0].items() if key not in {"part", "part_count", "entries"}})
         manifest.update(
             {
-                "schema_version": 3,
-                "selected_files": [entry["path"] for entry in entries],
+                "schema_version": 4 if split else 3,
+                "transported_files": [entry["path"] for entry in entries],
                 "summary": {
                     **manifest["summary"],
-                    "selected_file_count": len(entries),
-                    "selected_total_lines": sum(
-                        source.line_count
-                        for source in selected_files
-                        if source.rel_path.as_posix() in included_paths
-                    ),
-                    "selected_total_bytes": sum(entry["size_bytes"] for entry in entries),
+                    "transported_file_count": len(entries),
+                    "transported_total_bytes": sum(entry["size_bytes"] for entry in entries),
                 },
-                "transport": {
-                    "format": "tar+gzip+base64",
-                    "payload": payload_name,
-                    "payload_size_bytes": len(payload_bytes),
-                    "payload_sha256": hashlib.sha256(payload_bytes).hexdigest(),
-                    "base64_body_size_bytes": len(payload_body.encode("ascii")),
-                    "base64_body_sha256": hashlib.sha256(payload_body.encode("ascii")).hexdigest(),
-                    "archive_name": archive_name,
-                    "archive_size_bytes": len(archive_bytes),
-                    "archive_sha256": hashlib.sha256(archive_bytes).hexdigest(),
-                    "deterministic": True,
-                },
+                "transport": transport_details,
                 "archive_entries": entries,
+                "payload_count": part_count,
                 "bundle_count": 0,
                 "bundles": [],
             }

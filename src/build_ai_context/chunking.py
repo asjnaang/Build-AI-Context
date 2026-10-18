@@ -162,6 +162,7 @@ def force_bundle_json_files(
         for per_shape in (5, 4, 3):
             sampled, removed, groups = _sample_json(payload, per_shape)
             text = json.dumps(sampled, indent=2, ensure_ascii=False)
+            snapshot_bytes = text.encode("utf-8")
             lines = text.splitlines()
             if len(lines) < threshold:
                 replacement = SourceFile(
@@ -169,10 +170,12 @@ def force_bundle_json_files(
                     rel_path=source.rel_path,
                     category=source.category,
                     line_count=len(lines),
-                    size_bytes=len(text.encode("utf-8")),
-                    sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                    size_bytes=len(snapshot_bytes),
+                    sha256=hashlib.sha256(snapshot_bytes).hexdigest(),
                     lines=lines,
                     encoding=source.encoding,
+                    snapshot_bytes=snapshot_bytes,
+                    mode=source.mode,
                 )
                 details = {
                     "path": source.rel_path.as_posix(),
