@@ -737,10 +737,10 @@ def test_tar_gz_split_creates_bounded_independent_payloads(tmp_path):
     )
 
     manifest = json.loads(manifest_path.read_text())
-    assert manifest["schema_version"] == 4
+    assert manifest["schema_version"] == 5
     assert manifest["transport"]["split"] is True
-    assert manifest["payload_count"] == 2
-    restored = {}
+    assert manifest["payload_count"] == len(manifest["transport"]["payloads"])
+    members = {}
     for expected_part, record in enumerate(manifest["transport"]["payloads"], start=1):
         assert record["part"] == expected_part
         payload = (output / record["payload"]).read_bytes()
@@ -749,7 +749,11 @@ def test_tar_gz_split_creates_bounded_independent_payloads(tmp_path):
         archive_bytes = base64.b64decode(b"".join(body.split()), validate=True)
         with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
             for name in archive.getnames():
-                restored[name] = archive.extractfile(name).read()
+                members[name] = archive.extractfile(name).read()
+    restored = {
+        record["path"]: b"".join(members[name] for name in record["members"])
+        for record in manifest["transport"]["reassembly"]
+    }
     assert restored == {"a.txt": bytes(range(256)) * 20, "b.txt": bytes(reversed(range(256))) * 20}
 
 
