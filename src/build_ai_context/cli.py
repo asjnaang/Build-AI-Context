@@ -348,7 +348,13 @@ def run_quick_artifacts(args) -> int:
 
         exporter.print_path("Scanning project: ", root, style="cyan")
 
-        all_files, _skipped_reasons = exporter.scan_supported_files(root, skip_secret_files=True)
+        if args.graph:
+            read_mode = "graph"
+        else:
+            read_mode = "paths"
+        all_files, _skipped_reasons = exporter.scan_supported_files(
+            root, skip_secret_files=True, read_mode=read_mode
+        )
         if not all_files:
             exporter.print_warning("No supported files found.")
             return 1

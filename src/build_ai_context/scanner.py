@@ -185,6 +185,156 @@ def sha256_of_lines(lines: Sequence[str]) -> str:
     return hashlib.sha256(joined).hexdigest()
 
 
+def _read_one_snapshot(path: Path) -> Optional[Tuple[int, bytes, str]]:
+    """Read one file's permission bits, bytes, and SHA-256."""
+    try:
+        with path.open("rb") as source_stream:
+            raw_bytes = source_stream.read()
+            mode = os.fstat(source_stream.fileno()).st_mode & 0o777
+        return mode, raw_bytes, hashlib.sha256(raw_bytes).hexdigest()
+    except OSError:
+        return None
+
+
+def _native_snapshot_reader():
+    """Return the optional Rust reader, or None when that module is not installed."""
+    try:
+        from build_ai_context import baic_native
+    except ImportError:
+        return None
+    return baic_native.read_snapshots
+
+
+def load_snapshots(paths: Sequence[Path]) -> List[Optional[Tuple[int, bytes, str]]]:
+    """Read file bytes in order. Uses the Rust reader when it is installed."""
+    if len(paths) < 32:
+        return [_read_one_snapshot(path) for path in paths]
+    reader = _native_snapshot_reader()
+    if reader is not None:
+        try:
+            loaded = reader([str(path) for path in paths])
+            if len(loaded) == len(paths):
+                return [
+                    None if item is None else (int(item[0]), bytes(item[1]), str(item[2]))
+                    for item in loaded
+                ]
+        except (OSError, TypeError, ValueError, RuntimeError):
+            pass
+    from concurrent.futures import ThreadPoolExecutor
+
+    workers = min(8, len(paths), os.cpu_count() or 1)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(_read_one_snapshot, paths))
+
+
+def _graphable_suffixes() -> set:
+    from build_ai_context.graph import GRAPHABLE_EXTENSIONS
+
+    return GRAPHABLE_EXTENSIONS
+
+
+def _base64_line_count(size_bytes: int) -> int:
+    encoded_size = ((size_bytes + 2) // 3) * 4
+    return (encoded_size + 75) // 76
+
+
+def _source_from_snapshot(
+    path: Path,
+    rel_path: Path,
+    category: str,
+    encoding: str,
+    force_format: bool,
+    snapshot: Optional[Tuple[int, bytes, str]],
+    keep_lines: bool,
+) -> Tuple[Optional[SourceFile], str]:
+    """Build a source record from bytes already read, or a skip reason."""
+    if snapshot is None:
+        return None, "read_error"
+    mode, raw_bytes, sha256 = snapshot
+    binary = b"\x00" in raw_bytes[:4096]
+    format_policy = policy_for_path(path)
+    if binary and format_policy.content_kind != "binary" and not force_format:
+        return None, "binary"
+    if force_format and binary:
+        encoding = "base64"
+    if keep_lines:
+        lines = (
+            binary_lines_from_bytes(raw_bytes)
+            if encoding == "base64"
+            else text_lines_from_bytes(raw_bytes)
+        )
+        line_count = len(lines)
+    else:
+        lines = []
+        if encoding == "base64":
+            line_count = _base64_line_count(len(raw_bytes))
+        else:
+            line_count = raw_bytes.count(b"\n")
+            if raw_bytes and not raw_bytes.endswith((b"\n", b"\r")):
+                line_count += 1
+    return (
+        SourceFile(
+            abs_path=path.resolve(),
+            rel_path=rel_path,
+            category=category,
+            line_count=line_count,
+            size_bytes=len(raw_bytes),
+            sha256=sha256,
+            lines=lines,
+            encoding=encoding,
+            snapshot_bytes=raw_bytes,
+            mode=mode,
+        ),
+        "",
+    )
+
+
+def _source_from_stat(
+    path: Path,
+    rel_path: Path,
+    category: str,
+    encoding: str,
+    force_format: bool,
+) -> Tuple[Optional[SourceFile], str]:
+    """Classify a file from its size and a short sample, without keeping the body."""
+    try:
+        stat_result = path.stat()
+    except OSError:
+        return None, "read_error"
+    format_policy = policy_for_path(path)
+    binary = False
+    if format_policy.content_kind != "binary":
+        try:
+            with path.open("rb") as source_stream:
+                binary = b"\x00" in source_stream.read(4096)
+        except OSError:
+            return None, "read_error"
+    if binary and not force_format:
+        return None, "binary"
+    if force_format and binary:
+        encoding = "base64"
+    size_bytes = stat_result.st_size
+    if encoding == "base64":
+        line_count = _base64_line_count(size_bytes)
+    else:
+        line_count = 0
+    return (
+        SourceFile(
+            abs_path=path.resolve(),
+            rel_path=rel_path,
+            category=category,
+            line_count=line_count,
+            size_bytes=size_bytes,
+            sha256="",
+            lines=[],
+            encoding=encoding,
+            snapshot_bytes=None,
+            mode=stat_result.st_mode & 0o777,
+        ),
+        "",
+    )
+
+
 def _normalize_include_formats(values: Sequence[str]) -> set[str]:
     """Normalize user-supplied extensions to lowercase dotted suffixes."""
     normalized: set[str] = set()
@@ -208,8 +358,21 @@ def scan_supported_files(
     force_include_formats: Sequence[str] = (),
     exclude_formats: Sequence[str] = (),
     metadata_only: bool = False,
+    read_mode: Optional[str] = None,
 ) -> Tuple[List[SourceFile], Dict[str, int]]:
-    """Scan supported files after applying authoritative format exclusions."""
+    """Scan supported files after applying authoritative format exclusions.
+
+    read_mode:
+      full — read every included file (default)
+      metadata — keep bytes and counts, do not decode line lists
+      graph — read graphable source text and only stat other files
+      paths — stat and classify, do not keep file bodies
+    """
+    if read_mode is None:
+        read_mode = "metadata" if metadata_only else "full"
+    if read_mode not in {"full", "metadata", "graph", "paths"}:
+        raise ValueError("read_mode must be full, metadata, graph, or paths")
+    graphable_suffixes = _graphable_suffixes() if read_mode == "graph" else set()
     normalized_forced_paths = _normalize_selection_paths(force_ignored_paths, root)
     normalized_forced_formats = _normalize_include_formats(force_include_formats)
     normalized_excluded_formats = set(_normalize_exclude_formats(exclude_formats))
@@ -226,6 +389,7 @@ def scan_supported_files(
 
     discovered: List[SourceFile] = []
     skipped_reasons: Dict[str, int] = defaultdict(int)
+    pending: List[Tuple[Path, Path, str, str, bool]] = []
     inherited_patterns: Dict[Path, List[str]] = {root: _read_gitignore_lines(root / ".gitignore")}
 
     for dirpath, dirnames, filenames in os.walk(root, topdown=True):
@@ -272,53 +436,37 @@ def scan_supported_files(
                 continue
             if not category:
                 category = "config_docs"
-            format_policy = policy_for_path(path)
-            try:
-                encoding = format_policy.scanner_encoding
-                with path.open("rb") as source_stream:
-                    raw_bytes = source_stream.read()
-                    mode = os.fstat(source_stream.fileno()).st_mode & 0o777
-                binary = b"\x00" in raw_bytes[:4096]
-                if binary and format_policy.content_kind != "binary" and not force_format:
-                    skipped_reasons["binary"] += 1
-                    continue
-                if force_format and binary:
-                    encoding = "base64"
-                if metadata_only:
-                    lines = []
-                    if encoding == "base64":
-                        encoded_size = ((len(raw_bytes) + 2) // 3) * 4
-                        line_count = (encoded_size + 75) // 76
-                    else:
-                        line_count = raw_bytes.count(b"\n")
-                        if raw_bytes and not raw_bytes.endswith((b"\n", b"\r")):
-                            line_count += 1
-                else:
-                    lines = (
-                        binary_lines_from_bytes(raw_bytes)
-                        if encoding == "base64"
-                        else text_lines_from_bytes(raw_bytes)
-                    )
-                    line_count = len(lines)
-                size_bytes = len(raw_bytes)
-                sha256 = hashlib.sha256(raw_bytes).hexdigest()
-            except OSError:
-                skipped_reasons["read_error"] += 1
-                continue
-            discovered.append(
-                SourceFile(
-                    abs_path=path.resolve(),
-                    rel_path=rel_path,
-                    category=category,
-                    line_count=line_count,
-                    size_bytes=size_bytes,
-                    sha256=sha256,
-                    lines=lines,
-                    encoding=encoding,
-                    snapshot_bytes=raw_bytes,
-                    mode=mode,
-                )
+            encoding = policy_for_path(path).scanner_encoding
+            pending.append((path, rel_path, category, encoding, force_format))
+
+    body_indexes = [
+        index
+        for index, (path, _rel_path, _category, _encoding, _force_format) in enumerate(pending)
+        if read_mode in {"full", "metadata"}
+        or (read_mode == "graph" and path.suffix.lower() in graphable_suffixes)
+    ]
+    snapshots: Dict[int, Optional[Tuple[int, bytes, str]]] = {}
+    if body_indexes:
+        loaded = load_snapshots([pending[index][0] for index in body_indexes])
+        snapshots = dict(zip(body_indexes, loaded))
+
+    for index, (path, rel_path, category, encoding, force_format) in enumerate(pending):
+        if index in snapshots:
+            source, reason = _source_from_snapshot(
+                path,
+                rel_path,
+                category,
+                encoding,
+                force_format,
+                snapshots[index],
+                keep_lines=read_mode in {"full", "graph"},
             )
+        else:
+            source, reason = _source_from_stat(path, rel_path, category, encoding, force_format)
+        if source is None:
+            skipped_reasons[reason] += 1
+            continue
+        discovered.append(source)
     discovered.sort(key=lambda item: item.rel_path.as_posix())
     return discovered, dict(sorted(skipped_reasons.items()))
 
@@ -643,6 +791,15 @@ def exclude_files(
     return kept, normalized_paths, normalized_formats
 
 
+def _searchable_text(item: SourceFile) -> str:
+    """Return text for keyword search without forcing every scan to keep lines."""
+    if item.lines:
+        return "\n".join(item.lines)
+    if not item.snapshot_bytes or item.encoding == "base64":
+        return ""
+    return "\n".join(text_lines_from_bytes(item.snapshot_bytes))
+
+
 def filter_files_by_keywords(
     files: Sequence[SourceFile], keywords: Sequence[str]
 ) -> Tuple[List[SourceFile], List[str]]:
@@ -652,7 +809,7 @@ def filter_files_by_keywords(
     keywords_lower = [k.lower() for k in keywords]
 
     for item in files:
-        content_lower = "\n".join(item.lines).lower()
+        content_lower = _searchable_text(item).lower()
         found_keywords = [kw for kw in keywords_lower if kw in content_lower]
         if found_keywords:
             matched.append(item)
