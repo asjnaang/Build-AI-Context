@@ -606,11 +606,20 @@ def _line_at(text: str, index: int) -> int:
     return text.count("\n", 0, index) + 1
 
 
+def _stem_index(path_set: Set[str]) -> Dict[str, List[str]]:
+    """Map file stems to paths so basename resolution is not a scan per import."""
+    index: Dict[str, List[str]] = defaultdict(list)
+    for path in path_set:
+        index[Path(path).stem].append(path)
+    return index
+
+
 def _collect_imports(facts: Sequence[FileFacts], path_set: Set[str]) -> List[Tuple[str, str, bool]]:
     rows: List[Tuple[str, str, bool]] = []
+    stems = _stem_index(path_set)
     for item in sorted(facts, key=lambda f: f.path):
         for raw in item.imports:
-            resolved = resolve_import(item.path, raw, path_set)
+            resolved = resolve_import(item.path, raw, path_set, stems)
             rows.append((item.path, resolved or raw, resolved is not None))
     return rows
 
@@ -717,7 +726,12 @@ def _format_symbol_line(symbol: Symbol) -> str:
     return f"{symbol.kind}: {symbol.name},"
 
 
-def resolve_import(from_path: str, spec: str, path_set: Set[str]) -> Optional[str]:
+def resolve_import(
+    from_path: str,
+    spec: str,
+    path_set: Set[str],
+    stems: Optional[Dict[str, List[str]]] = None,
+) -> Optional[str]:
     """Best-effort resolve of an import spec onto a scanned project file."""
     if not spec or spec == "__future__":
         return None
@@ -728,7 +742,7 @@ def resolve_import(from_path: str, spec: str, path_set: Set[str]) -> Optional[st
     dotted = _resolve_dotted(from_path, spec, path_set)
     if dotted:
         return dotted
-    return _resolve_basename(spec, path_set)
+    return _resolve_basename(spec, path_set, stems)
 
 
 def _resolve_relative(from_path: str, spec: str, path_set: Set[str]) -> Optional[str]:
@@ -762,9 +776,14 @@ def _resolve_dotted(from_path: str, spec: str, path_set: Set[str]) -> Optional[s
     return _match_existing(rel, path_set, from_path)
 
 
-def _resolve_basename(spec: str, path_set: Set[str]) -> Optional[str]:
+def _resolve_basename(
+    spec: str, path_set: Set[str], stems: Optional[Dict[str, List[str]]] = None
+) -> Optional[str]:
     name = spec.rsplit(".", 1)[-1]
-    matches = [p for p in path_set if Path(p).stem == name]
+    if stems is None:
+        matches = [path for path in path_set if Path(path).stem == name]
+    else:
+        matches = stems.get(name, [])
     if len(matches) == 1:
         return matches[0]
     return None
