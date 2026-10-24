@@ -56,12 +56,14 @@ preimages. Do not treat the Base64 payload as source text and do not dump it int
 
 ```python
 #!/usr/bin/env python3
-"""Validate and reconstruct a BAIC tar+gzip+base64 text payload."""
+"""Validate and reconstruct one or more BAIC tar+gzip+base64 text payloads."""
 import argparse, base64, hashlib, io, json, shutil, tarfile, tempfile
 from pathlib import Path, PurePosixPath
 
+
 def fail(message):
     raise ValueError(message)
+
 
 def safe(name):
     path = PurePosixPath(name)
@@ -69,8 +71,40 @@ def safe(name):
         fail(f"unsafe path: {name!r}")
     return path
 
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def decode_payload(manifest_path, record, expected):
+    payload = manifest_path.parent / record["payload"]
+    payload_bytes = payload.read_bytes()
+    if len(payload_bytes) != record["payload_size_bytes"] or digest(payload_bytes) != record["payload_sha256"]:
+        fail(f"payload size or SHA-256 mismatch: {payload.name}")
+    header, separator, body = payload_bytes.partition(b"\n\n")
+    if not separator or not header.startswith(b"BAIC-ENCODED-CONTEXT-V1\n"):
+        fail(f"invalid payload header: {payload.name}")
+    encoded = b"".join(body.split())
+    if len(encoded) != record["base64_body_size_bytes"] or digest(encoded) != record["base64_body_sha256"]:
+        fail(f"Base64 body size or SHA-256 mismatch: {payload.name}")
+    archive_bytes = base64.b64decode(encoded, validate=True)
+    if len(archive_bytes) != record["archive_size_bytes"] or digest(archive_bytes) != record["archive_sha256"]:
+        fail(f"decoded archive size or SHA-256 mismatch: {payload.name}")
+    files = {}
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
+        for member in archive.getmembers():
+            name = str(safe(member.name))
+            if name in files or name not in expected or not member.isfile():
+                fail(f"unexpected or unsafe archive member: {name}")
+            data = archive.extractfile(member).read()
+            entry = expected[name]
+            if len(data) != entry["size_bytes"] or digest(data) != entry["sha256"]:
+                fail(f"entry size or SHA-256 mismatch: {name}")
+            files[name] = data
+    if set(files) != set(record["entries"]):
+        fail(f"payload path-set mismatch: {payload.name}")
+    return files, archive_bytes
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -83,59 +117,67 @@ def main():
     transport = manifest.get("transport") or {}
     if transport.get("format") != "tar+gzip+base64":
         fail("manifest is not a tar+gzip+base64 package")
-    payload = manifest_path.parent / transport["payload"]
-    payload_bytes = payload.read_bytes()
-    if len(payload_bytes) != transport["payload_size_bytes"] or digest(payload_bytes) != transport["payload_sha256"]:
-        fail("payload size or SHA-256 mismatch")
-    header, separator, body = payload_bytes.partition(b"\n\n")
-    if not separator or not header.startswith(b"BAIC-ENCODED-CONTEXT-V1\n"):
-        fail("invalid payload header")
-    encoded = b"".join(body.split())
-    if len(encoded) != transport["base64_body_size_bytes"] or digest(encoded) != transport["base64_body_sha256"]:
-        fail("Base64 body size or SHA-256 mismatch")
-    archive_bytes = base64.b64decode(encoded, validate=True)
-    if len(archive_bytes) != transport["archive_size_bytes"] or digest(archive_bytes) != transport["archive_sha256"]:
-        fail("decoded archive size or SHA-256 mismatch")
+    payloads = sorted(transport.get("payloads") or [transport], key=lambda item: item.get("part", 1))
+    if [item.get("part", 1) for item in payloads] != list(range(1, len(payloads) + 1)):
+        fail("missing, duplicate, or reordered payload part")
+    if any(item.get("part_count", len(payloads)) != len(payloads) for item in payloads):
+        fail("payload part-count mismatch")
     expected = {entry["path"]: entry for entry in manifest["archive_entries"]}
+    if len(expected) != len(manifest["archive_entries"]):
+        fail("duplicate manifest archive entry")
     files = {}
-    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
-        seen = set()
-        for member in archive.getmembers():
-            name = str(safe(member.name))
-            if name in seen:
-                fail(f"duplicate archive member: {name}")
-            seen.add(name)
-            if not member.isfile() or name not in expected:
-                fail(f"unexpected or unsafe archive member: {name}")
-            stream = archive.extractfile(member)
-            data = stream.read() if stream else b""
-            entry = expected[name]
-            if len(data) != entry["size_bytes"] or digest(data) != entry["sha256"]:
-                fail(f"entry size or SHA-256 mismatch: {name}")
-            files[name] = data
+    archive_hashes = []
+    for record in payloads:
+        part_files, archive_bytes = decode_payload(manifest_path, record, expected)
+        overlap = set(files).intersection(part_files)
+        if overlap:
+            fail(f"archive member appears in multiple payloads: {sorted(overlap)}")
+        files.update(part_files)
+        archive_hashes.append(digest(archive_bytes))
     if set(files) != set(expected):
         fail(f"archive path-set mismatch: missing={sorted(set(expected)-set(files))}")
+    reassembly = transport.get("reassembly") or []
+    consumed = set()
+    restored = {}
+    modes = {entry["path"]: entry.get("mode", 0o644) for entry in manifest["archive_entries"]}
+    for record in reassembly:
+        name = str(safe(record["path"]))
+        members = record["members"]
+        if not members or any(member in consumed or member not in files for member in members):
+            fail(f"invalid reassembly members: {name}")
+        data = b"".join(files[member] for member in members)
+        if len(data) != record["size_bytes"] or digest(data) != record["sha256"]:
+            fail(f"reassembled file size or SHA-256 mismatch: {name}")
+        restored[name] = data
+        modes[name] = record.get("mode", 0o644)
+        consumed.update(members)
+    for name, data in files.items():
+        if name not in consumed:
+            restored[name] = data
     output = Path(args.output).resolve()
     if output.exists() and not args.force:
         fail(f"output exists; use --force: {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix=f".{output.name}.stage-", dir=output.parent))
     try:
-        for name, data in files.items():
+        for name, data in restored.items():
             target = stage.joinpath(*safe(name).parts)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
-        (stage / "RECONSTRUCTION_REPORT.json").write_text(json.dumps({
+            target.chmod(modes[name] & 0o777)
+        report = {
             "status": "success", "manifest": manifest_path.name,
-            "payload": payload.name, "restored_entries": len(files),
-            "archive_sha256": digest(archive_bytes),
-        }, indent=2) + "\n")
+            "payloads": [item["payload"] for item in payloads],
+            "restored_entries": len(restored), "archive_sha256": archive_hashes,
+        }
+        (stage / "RECONSTRUCTION_REPORT.json").write_text(json.dumps(report, indent=2) + "\n")
         if output.exists():
             shutil.rmtree(output)
         stage.replace(output)
     finally:
         if stage.exists():
             shutil.rmtree(stage)
+
 
 if __name__ == "__main__":
     main()

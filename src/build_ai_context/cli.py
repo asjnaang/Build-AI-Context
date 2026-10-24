@@ -30,7 +30,17 @@ from build_ai_context.constants import (
 from build_ai_context.exporter import CodeExporter
 from build_ai_context.models import SourceFile
 from build_ai_context.planning import build_export_plan
+from build_ai_context.restore import RestoreError, restore_export
 from build_ai_context.scanner import expand_explicit_path_inputs
+
+
+class ExportAllAction(argparse.Action):
+    """Enable non-interactive export while retaining an explicit all-files intent."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        del parser, values, option_string
+        setattr(namespace, self.dest, True)
+        setattr(namespace, "non_interactive", True)
 from build_ai_context.update_source_file_headers import DEFAULT_EXCLUDES, walk_and_update
 
 
@@ -46,6 +56,33 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default=".",
         help="Project root to scan. Defaults to the current working directory.",
+    )
+    parser.add_argument(
+        "--restore",
+        nargs="?",
+        const=".",
+        metavar="EXPORT_PATH",
+        help=(
+            "Restore exact files from a tar-gz BAIC export directory or manifest. "
+            "When EXPORT_PATH is omitted, read the export from the current directory. "
+            "By default, create PROJECT_NAME in the current directory."
+        ),
+    )
+    parser.add_argument(
+        "--restore-output",
+        metavar="DIR",
+        help=(
+            "Destination directory for --restore. Defaults to PROJECT_NAME under the "
+            "current working directory."
+        ),
+    )
+    parser.add_argument(
+        "--restore-force",
+        action="store_true",
+        help=(
+            "Replace an existing restore destination. Requires --restore and never "
+            "modifies the export source directory."
+        ),
     )
     # Bundle packing size is fixed at DEFAULT_MAX_LINES (8000). Only the per-source
     # file inclusion threshold is CLI-overridable.
@@ -102,7 +139,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Split tar-gz transport into deterministic Base64 payload parts, each no larger "
-            "than 18 MiB. Default tar-gz behavior remains one payload."
+            "than 19.9 MB. Files are encoded as independently compressed TAR members, packed "
+            "by exact compressed size, and reconstructed as one standard concatenated gzip "
+            "stream per payload. Default tar-gz behavior remains one payload."
         ),
     )
     parser.add_argument(
@@ -127,9 +166,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--all",
-        dest="non_interactive",
-        action="store_true",
-        help="Export all supported files without prompts.",
+        dest="select_all",
+        action=ExportAllAction,
+        nargs=0,
+        default=False,
+        help=(
+            "Export all normally discoverable supported files without prompts. Explicit "
+            "--paths are additive; with --force-ignored, only ignored files under those "
+            "paths are additionally included."
+        ),
     )
     parser.add_argument(
         "--categories",
@@ -244,6 +289,21 @@ def main() -> int:
     """Main entry point for the CLI."""
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.restore:
+        try:
+            destination, restored_count = restore_export(
+                Path(args.restore),
+                Path(args.restore_output) if args.restore_output else None,
+                force=args.restore_force,
+            )
+        except RestoreError as error:
+            parser.error(str(error))
+        print(f"Restore complete: {restored_count} file(s) written to {destination}")
+        return 0
+
+    if args.restore_output or args.restore_force:
+        parser.error("--restore-output and --restore-force require --restore")
 
     # Handle --update-headers
     if args.update_headers:
@@ -387,7 +447,18 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         exporter.print_info(f"Detected {len(all_files)} supported file(s).")
 
         if args.non_interactive:
-            if args.keywords:
+            if args.select_all:
+                selected_files = list(all_files)
+                selection_metadata = {
+                    "selection_mode": "all",
+                    "selected_categories": [],
+                    "selected_paths": exporter._normalize_selection_paths(
+                        expand_explicit_path_inputs(args.paths, root), root
+                    ),
+                    "name_filters": [],
+                    "missing_paths": [],
+                }
+            elif args.keywords:
                 matched_files, matched_keywords = exporter.filter_files_by_keywords(
                     all_files, args.keywords
                 )
@@ -595,6 +666,21 @@ def interactive_main() -> int:
     """Main entry point for interactive mode with loop."""
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.restore:
+        try:
+            destination, restored_count = restore_export(
+                Path(args.restore),
+                Path(args.restore_output) if args.restore_output else None,
+                force=args.restore_force,
+            )
+        except RestoreError as error:
+            parser.error(str(error))
+        print(f"Restore complete: {restored_count} file(s) written to {destination}")
+        return 0
+
+    if args.restore_output or args.restore_force:
+        parser.error("--restore-output and --restore-force require --restore")
 
     # Handle --update-headers
     if args.update_headers:

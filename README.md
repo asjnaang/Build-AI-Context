@@ -23,6 +23,9 @@ baic
 # Non-interactive - export everything supported
 baic . --all
 
+# Export normal project files plus explicitly requested ignored/generated paths
+baic . --all --force-ignored --paths outputs/knowledge outputs/latest-run
+
 # Non-interactive - export specific categories
 baic . --non-interactive --categories python typescript
 ```
@@ -69,6 +72,11 @@ baic . --non-interactive --paths "main.py utils.py, helpers.py"
 
 The tool intelligently parses paths even if you mix commas and spaces or omit separators.
 
+When `--all` and `--paths` are combined, `--all` selects every normally discoverable supported file and
+`--paths` supplies additional explicit locations. Ignored/default-excluded content is added only when
+`--force-ignored` is also present, and that bypass is restricted to the supplied paths. Unrelated ignored
+content remains excluded. `--exclude-paths` and `--exclude-formats` still remove files from the final set.
+
 ### 4) mixed - Categories + Paths + Name Filters
 Combine categories, paths, and filename filters:
 
@@ -101,6 +109,7 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `--graph` | Generate code graph only (catalog + imports), exit | `baic --graph .` |
 | `--format` | Graph file format: `txt` (default) or `json` | `--graph --format json` |
 | `--categories` | Export by category | `--categories python typescript` |
+| `--all` | Export all normally discoverable files; explicit `--paths` remain additive | `--all --force-ignored --paths outputs/run` |
 | `--paths` | Export by path/filename | `--paths src tests` |
 | `--keywords` | Search in code content | `--keywords TODO FIXME` |
 | `--exclude-paths` | Remove files/folders from the final selected set | `--exclude-paths tests fixtures` |
@@ -472,3 +481,65 @@ Contributions welcome! Please feel free to submit a Pull Request.
 ## License
 
 MIT License - see LICENSE file for details.
+
+
+### Large files with compressed split transport
+
+With `--transport tar-gz --split`, a single PDF, SQLite database, or existing compressed file may exceed the payload limit. Such files are divided into deterministic transport members, recorded in `transport.reassembly`, and restored byte-for-byte by the generated extractor. Each payload remains an independently validated tar+gzip+base64 document.
+
+### How compressed split transport is packed
+
+With `--transport tar-gz --split`, BAIC limits each complete text payload to **19,900,000 bytes**. The limit
+includes the payload header, wrapped Base64 body, and line breaks, not only the gzip archive.
+
+Each logical TAR file member is compressed once as an independent deterministic gzip member. RFC 1952 permits
+concatenated gzip members, so standard gzip readers decode the concatenation into one ordinary TAR byte stream.
+This gives the planner an exact additive compressed size for every file or oversized-file part before grouping.
+The planner then:
+
+1. applies best-fit decreasing bin packing using those exact compressed sizes;
+2. runs a bounded exact search over the least-filled three-to-five payloads to eliminate a locally avoidable bin;
+3. appends the compressed TAR end marker and validates the final Base64 text payload against 19,900,000 bytes.
+
+The bounded search is intentionally local and capped at 250,000 states. It fixes patterns where three partially
+filled payloads can be redistributed into two without restoring the previous repeated whole-archive compression
+cost. Every payload except the unavoidable final residual is filled as closely as indivisible member sizes allow.
+Oversized source files remain represented by deterministic `.baic-file-parts/` members and are reassembled from
+`transport.reassembly` after extraction and SHA-256 validation.
+
+### Restore a compressed export
+
+A `tar-gz` export can be rebuilt byte-for-byte from its generated manifest and payload files. The restore source
+and destination both have useful defaults:
+
+- `baic --restore` reads the export from the current directory.
+- The default destination is `PROJECT_NAME` under the current working directory, derived from the manifest's
+  `project_root`.
+- Passing an export directory or exact manifest changes only the source. It does not make that directory the
+  destination.
+
+From inside an export directory:
+
+```bash
+baic --restore
+```
+
+From its parent or any other directory:
+
+```bash
+baic --restore ./exported_sources_my-project_20261112T120000
+```
+
+Both commands create `./my-project` unless `--restore-output` is supplied:
+
+```bash
+baic --restore ./exported_sources_my-project_20261112T120000 \
+  --restore-output ./rebuilt-project
+```
+
+An existing destination is rejected. Use `--restore-force` with `--restore` only when that complete destination
+should be replaced. BAIC never restores over or deletes the export source directory.
+
+Restore validates the manifest, every payload and Base64 body, decoded archives, safe paths, entry hashes, and
+split-file reassembly before atomically publishing the rebuilt files. Readable `text` bundles are not accepted
+because they may be redacted and do not preserve every selected source byte.
