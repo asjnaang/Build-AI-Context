@@ -15,6 +15,7 @@ import hashlib
 import io
 import json
 import tarfile
+import zlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set
@@ -224,6 +225,105 @@ def write_project_overview(
     return output_path
 
 
+def _repack_group_window(
+    groups: Sequence[Sequence[SourceFile]],
+    group_sizes: Sequence[int],
+    member_weights: Dict[str, int],
+    capacity: int,
+    max_nodes: int = 250_000,
+) -> Optional[List[List[SourceFile]]]:
+    """Repack a small group window into one fewer bin using bounded exact search."""
+    target_count = len(groups) - 1
+    if target_count < 1 or sum(group_sizes) > target_count * capacity:
+        return None
+    sources = sorted(
+        (source for group in groups for source in group),
+        key=lambda source: (-member_weights[source.rel_path.as_posix()], source.rel_path.as_posix()),
+    )
+    if sources and member_weights[sources[0].rel_path.as_posix()] > capacity:
+        return None
+    target_groups: List[List[SourceFile]] = [[] for _ in range(target_count)]
+    remaining = [capacity] * target_count
+    nodes = 0
+
+    def place(source_index: int) -> bool:
+        nonlocal nodes
+        nodes += 1
+        if nodes > max_nodes:
+            return False
+        if source_index == len(sources):
+            return True
+        source = sources[source_index]
+        weight = member_weights[source.rel_path.as_posix()]
+        tried_remaining: Set[int] = set()
+        for group_index in sorted(range(target_count), key=lambda index: remaining[index]):
+            available = remaining[group_index]
+            if available < weight or available in tried_remaining:
+                continue
+            tried_remaining.add(available)
+            target_groups[group_index].append(source)
+            remaining[group_index] -= weight
+            if place(source_index + 1):
+                return True
+            remaining[group_index] += weight
+            target_groups[group_index].pop()
+            if available == capacity:
+                break
+        return False
+
+    if place(0):
+        return [group for group in target_groups if group]
+
+    # The common compaction case is three underfilled payloads that should fit in two.
+    # Exact backtracking can hit its node bound when those payloads contain hundreds of
+    # small files. A quantized bitset subset-sum finds that two-bin partition in bounded
+    # time and memory. Rounding every member up makes a found partition conservative;
+    # the caller still verifies the resulting payload bytes against the exact limit.
+    if target_count != 2:
+        return None
+    for quantum in (1024, 256):
+        capacity_units = capacity // quantum
+        scaled = [
+            (member_weights[source.rel_path.as_posix()] + quantum - 1) // quantum
+            for source in sources
+        ]
+        total_units = sum(scaled)
+        if total_units > 2 * capacity_units:
+            continue
+        reachable = 1
+        mask = (1 << (capacity_units + 1)) - 1
+        history = [reachable]
+        for weight in scaled:
+            reachable = (reachable | (reachable << weight)) & mask
+            history.append(reachable)
+        lower_bound = max(0, total_units - capacity_units)
+        midpoint = total_units // 2
+        target = next(
+            (
+                candidate
+                for distance in range(capacity_units + 1)
+                for candidate in (midpoint - distance, midpoint + distance)
+                if lower_bound <= candidate <= capacity_units
+                and (reachable >> candidate) & 1
+            ),
+            None,
+        )
+        if target is None:
+            continue
+        first: List[SourceFile] = []
+        second: List[SourceFile] = []
+        for index in range(len(sources) - 1, -1, -1):
+            previous = history[index]
+            if (previous >> target) & 1:
+                second.append(sources[index])
+            else:
+                first.append(sources[index])
+                target -= scaled[index]
+        if first and second:
+            return [first, second]
+    return None
+
+
 def write_bundles_and_manifest(
     root: Path,
     selected_files: Sequence[SourceFile],
@@ -246,7 +346,7 @@ def write_bundles_and_manifest(
     binary_policy: str = "include",
     policy_omissions: Sequence[Dict[str, object]] = (),
     split: bool = False,
-    split_payload_max_bytes: int = 18 * 1024 * 1024,
+    split_payload_max_bytes: int = 19_900_000,
 ) -> Path:
     """Write bundles and manifest to the output directory."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -360,36 +460,254 @@ def write_bundles_and_manifest(
             ).encode("ascii")
             return header + wrapped + b"\n", body
 
+        # A split payload has Base64 and TAR framing overhead. Split large source files into
+        # deterministic transport members before payload packing so one incompressible PDF,
+        # SQLite database, or existing .gz file cannot make the export impossible.
+        logical_sources = sorted_sources
+        reassembly_records: List[Dict[str, object]] = []
+        part_owner: Dict[str, str] = {}
+        if split:
+            framing_reserve = min(128 * 1024, split_payload_max_bytes // 8)
+            # Keep physical members below half of one archive's usable capacity. This
+            # prevents three individually valid, half-full members from becoming an
+            # unsplittable three-bin pattern even when their combined bytes fit two
+            # payloads. Splitting changes only TAR member boundaries; total compression
+            # work remains linear in the same source bytes.
+            max_member_bytes = max(1, (split_payload_max_bytes * 3 // 8) - framing_reserve)
+            physical_sources: List[SourceFile] = []
+            for source in logical_sources:
+                data = source_bytes(source)
+                if len(data) <= max_member_bytes:
+                    physical_sources.append(source)
+                    continue
+                part_count_for_file = (len(data) + max_member_bytes - 1) // max_member_bytes
+                member_paths: List[str] = []
+                file_key = hashlib.sha256(source.rel_path.as_posix().encode("utf-8")).hexdigest()[:16]
+                for part_index in range(part_count_for_file):
+                    start_offset = part_index * max_member_bytes
+                    part_data = data[start_offset : start_offset + max_member_bytes]
+                    member_path = Path(
+                        ".baic-file-parts"
+                    ) / file_key / f"{part_index + 1:06d}-of-{part_count_for_file:06d}.part"
+                    member_paths.append(member_path.as_posix())
+                    part_owner[member_path.as_posix()] = source.rel_path.as_posix()
+                    physical_sources.append(
+                        SourceFile(
+                            abs_path=source.abs_path,
+                            rel_path=member_path,
+                            category=source.category,
+                            line_count=0,
+                            size_bytes=len(part_data),
+                            sha256=hashlib.sha256(part_data).hexdigest(),
+                            lines=[],
+                            encoding="base64",
+                            snapshot_bytes=part_data,
+                            mode=source.mode,
+                        )
+                    )
+                reassembly_records.append(
+                    {
+                        "path": source.rel_path.as_posix(),
+                        "size_bytes": source.size_bytes,
+                        "sha256": source.sha256,
+                        "mode": source.mode if source.mode is not None else 0o644,
+                        "members": member_paths,
+                    }
+                )
+            sorted_sources = physical_sources
+
         source_groups: List[List[SourceFile]] = [sorted_sources]
         group_archives: List[bytes] = []
         if split:
-            source_groups = []
-            start = 0
-            probe_name = f"{folder_name}_context_part_001_of_999_{timestamp}.tar.gz"
-            while start < len(sorted_sources):
-                low = start + 1
-                high = len(sorted_sources)
-                best_end = start
-                best_archive: Optional[bytes] = None
-                while low <= high:
-                    middle = (low + high) // 2
-                    candidate_archive = archive_bytes_for(sorted_sources[start:middle])
-                    candidate_payload, _ = payload_bytes_for(probe_name, candidate_archive)
-                    if len(candidate_payload) <= split_payload_max_bytes:
-                        best_end = middle
-                        best_archive = candidate_archive
-                        low = middle + 1
+            # Estimate each member from bounded samples, pack near the real compressed limit,
+            # then split only a rare group whose final payload exceeds that limit.
+            framing_reserve = min(128 * 1024, split_payload_max_bytes // 16)
+            encoded_budget = max(1, split_payload_max_bytes - framing_reserve)
+            archive_budget = max(1, encoded_budget * 3 // 4)
+            sample_size = 64 * 1024
+
+            def estimated_archive_size(source: SourceFile) -> int:
+                data = source_bytes(source)
+                if len(data) <= sample_size:
+                    sample = data
+                else:
+                    half = sample_size // 2
+                    sample = data[:half] + data[-half:]
+                compressed_size = len(zlib.compress(sample, level=GZIP_COMPRESSLEVEL))
+                ratio = compressed_size / max(1, len(sample))
+                estimated_data = max(compressed_size, int(source.size_bytes * ratio))
+                return 512 + ((estimated_data + 511) // 512 * 512)
+
+            estimates = {
+                source.rel_path.as_posix(): estimated_archive_size(source)
+                for source in sorted_sources
+            }
+
+            def best_fit_groups(sources: Sequence[SourceFile]) -> List[List[SourceFile]]:
+                groups: List[List[SourceFile]] = []
+                group_sizes: List[int] = []
+                ordered_sources = sorted(
+                    sources,
+                    key=lambda source: (
+                        -estimates[source.rel_path.as_posix()],
+                        source.rel_path.as_posix(),
+                    ),
+                )
+                for source in ordered_sources:
+                    member_size = estimates[source.rel_path.as_posix()]
+                    best_index: Optional[int] = None
+                    best_remaining: Optional[int] = None
+                    for index, group_size in enumerate(group_sizes):
+                        remaining = archive_budget - group_size - member_size
+                        if remaining >= 0 and (best_remaining is None or remaining < best_remaining):
+                            best_index = index
+                            best_remaining = remaining
+                    if best_index is None:
+                        groups.append([source])
+                        group_sizes.append(1024 + member_size)
                     else:
-                        high = middle - 1
-                if best_archive is None:
-                    source = sorted_sources[start]
+                        groups[best_index].append(source)
+                        group_sizes[best_index] += member_size
+                return groups
+
+            probe_name = f"{folder_name}_context_part_001_of_999_{timestamp}.tar.gz"
+            # Compress each TAR member independently, then concatenate the gzip members.
+            # RFC 1952 readers decode concatenated members as one byte stream, yielding one
+            # ordinary TAR archive. Compressed member sizes are exact additive packing weights.
+            def compressed_tar_member(source: SourceFile) -> bytes:
+                data = source_bytes(source)
+                info = tarfile.TarInfo(source.rel_path.as_posix())
+                info.size = len(data)
+                info.mode = source.mode if source.mode is not None else 0o644
+                info.mtime = 0
+                info.uid = info.gid = 0
+                info.uname = info.gname = ""
+                padding = (-len(data)) % 512
+                member_bytes = (
+                    info.tobuf(format=tarfile.PAX_FORMAT) + data + (b"\0" * padding)
+                )
+                compressed_output = io.BytesIO()
+                with gzip.GzipFile(
+                    filename="", mode="wb", fileobj=compressed_output, mtime=0,
+                    compresslevel=GZIP_COMPRESSLEVEL,
+                ) as gz_output:
+                    gz_output.write(member_bytes)
+                return compressed_output.getvalue()
+
+            compressed_members = {
+                source.rel_path.as_posix(): compressed_tar_member(source)
+                for source in sorted_sources
+            }
+            end_blocks_output = io.BytesIO()
+            with gzip.GzipFile(
+                filename="", mode="wb", fileobj=end_blocks_output, mtime=0,
+                compresslevel=GZIP_COMPRESSLEVEL,
+            ) as gz_output:
+                gz_output.write(b"\0" * 1024)
+            end_blocks = end_blocks_output.getvalue()
+            member_weights = {
+                path: len(member_bytes) for path, member_bytes in compressed_members.items()
+            }
+            def payload_size_for_archive_size(archive_size: int) -> int:
+                body_size = ((archive_size + 2) // 3) * 4
+                wrapped_body_size = body_size + ((body_size - 1) // 76) + 1
+                header_size = len(
+                    (
+                        "BAIC-ENCODED-CONTEXT-V1\n"
+                        f"archive-name: {probe_name}\n"
+                        "content-format: tar+gzip\n"
+                        "transport-encoding: base64\n"
+                        f"archive-size-bytes: {archive_size}\n"
+                        f"archive-sha256: {'0' * 64}\n"
+                        f"base64-body-size-bytes: {body_size}\n"
+                        f"base64-body-sha256: {'0' * 64}\n\n"
+                    ).encode("ascii")
+                )
+                return header_size + wrapped_body_size
+
+            low, high = 0, split_payload_max_bytes
+            while low < high:
+                middle = (low + high + 1) // 2
+                if payload_size_for_archive_size(middle) <= split_payload_max_bytes:
+                    low = middle
+                else:
+                    high = middle - 1
+            exact_archive_budget = max(1, low - len(end_blocks))
+
+            exact_groups: List[List[SourceFile]] = []
+            exact_group_sizes: List[int] = []
+            for source in sorted(
+                sorted_sources,
+                key=lambda item: (
+                    -member_weights[item.rel_path.as_posix()], item.rel_path.as_posix()
+                ),
+            ):
+                member_size = member_weights[source.rel_path.as_posix()]
+                best_index: Optional[int] = None
+                best_remaining: Optional[int] = None
+                for index, group_size in enumerate(exact_group_sizes):
+                    remaining = exact_archive_budget - group_size - member_size
+                    if remaining >= 0 and (best_remaining is None or remaining < best_remaining):
+                        best_index = index
+                        best_remaining = remaining
+                if best_index is None:
+                    exact_groups.append([source])
+                    exact_group_sizes.append(member_size)
+                else:
+                    exact_groups[best_index].append(source)
+                    exact_group_sizes[best_index] += member_size
+
+            # Best-fit decreasing is fast but can leave a local three-bin pattern that fits
+            # into two bins after redistribution. Search only the least-filled windows, with a
+            # strict node bound, to remove that extra payload without unbounded latency.
+            improved = True
+            while improved and len(exact_groups) > 2:
+                improved = False
+                for window_size in range(3, min(5, len(exact_groups)) + 1):
+                    selected = sorted(
+                        range(len(exact_groups)), key=lambda index: exact_group_sizes[index]
+                    )[:window_size]
+                    window_groups = [exact_groups[index] for index in selected]
+                    window_sizes = [exact_group_sizes[index] for index in selected]
+                    repacked = _repack_group_window(
+                        window_groups, window_sizes, member_weights, exact_archive_budget
+                    )
+                    if repacked is None:
+                        continue
+                    retained = [
+                        index for index in range(len(exact_groups)) if index not in set(selected)
+                    ]
+                    exact_groups = [exact_groups[index] for index in retained] + repacked
+                    exact_group_sizes = [exact_group_sizes[index] for index in retained] + [
+                        sum(member_weights[source.rel_path.as_posix()] for source in group)
+                        for group in repacked
+                    ]
+                    improved = True
+                    break
+
+            exact_archives: List[bytes] = []
+            for group in exact_groups:
+                group.sort(key=lambda source: source.rel_path.as_posix())
+                archive_bytes = b"".join(
+                    compressed_members[source.rel_path.as_posix()] for source in group
+                ) + end_blocks
+                payload_bytes, _ = payload_bytes_for(probe_name, archive_bytes)
+                if len(payload_bytes) > split_payload_max_bytes:
+                    source = group[0]
                     raise ValueError(
                         f"File cannot fit in one {split_payload_max_bytes}-byte payload: "
-                        f"{source.rel_path.as_posix()}"
+                        f"{part_owner.get(source.rel_path.as_posix(), source.rel_path.as_posix())}"
                     )
-                source_groups.append(sorted_sources[start:best_end])
-                group_archives.append(best_archive)
-                start = best_end
+                exact_archives.append(archive_bytes)
+            source_groups = exact_groups
+            group_archives = exact_archives
+
+            ordered_parts = sorted(
+                zip(source_groups, group_archives),
+                key=lambda item: item[0][0].rel_path.as_posix(),
+            )
+            source_groups = [item[0] for item in ordered_parts]
+            group_archives = [item[1] for item in ordered_parts]
         else:
             group_archives = [archive_bytes_for(sorted_sources)]
 
@@ -445,13 +763,14 @@ def write_bundles_and_manifest(
             "payload_count": part_count,
             "payloads": payload_records,
             "deterministic": True,
+            "reassembly": reassembly_records,
         }
         if not split:
             transport_details.update({key: value for key, value in payload_records[0].items() if key not in {"part", "part_count", "entries"}})
         manifest.update(
             {
-                "schema_version": 4 if split else 3,
-                "transported_files": [entry["path"] for entry in entries],
+                "schema_version": 5 if reassembly_records else (4 if split else 3),
+                "transported_files": [source.rel_path.as_posix() for source in logical_sources],
                 "summary": {
                     **manifest["summary"],
                     "transported_file_count": len(entries),

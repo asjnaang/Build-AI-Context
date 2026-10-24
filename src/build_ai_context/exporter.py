@@ -267,7 +267,7 @@ class CodeExporter:
         binary_policy: str = "include",
         policy_omissions: Sequence[Dict[str, object]] = (),
         split: bool = False,
-        split_payload_max_bytes: int = 18 * 1024 * 1024,
+        split_payload_max_bytes: int = 19_900_000,
     ) -> Path:
         """Write bundles and manifest to the output directory."""
         return writing.write_bundles_and_manifest(
