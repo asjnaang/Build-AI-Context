@@ -345,7 +345,13 @@ On patch rejection, mark rejected existing-file paths disproved. Do not patch th
 
 Use available repository instructions and skill routing as navigation, not material to preload. Inspect the installation/bootstrap once, select the most specific relevant skill, read its complete active instructions, and only the needed support files. Use `engineering/ask-matt/SKILL.md` when multiple engineering routes remain plausible and it is available. Follow required verification skills before completion.
 
-Do not repeatedly enumerate the same unavailable skills after unrelated tool failures. Missing optional skills are not a source blocker. If a required skill/bootstrap cannot be verified, state the exact limitation once, follow governing instructions, and continue safe work that does not depend on it. Never claim an unavailable skill was used.
+Do not repeatedly enumerate the same unavailable skills after unrelated tool failures. The absence or failed
+verification of a skill package, routing index, bootstrap, or named skill is not by itself a blocker. State the
+limitation once, never claim an unavailable skill was used, and continue with available tools and exact source
+whenever the required files and evidence are sufficient to complete the task safely and correctly. Treat the
+missing skill as a genuine blocker only when the task materially depends on unique instructions or capabilities
+that cannot be reproduced safely with the available evidence and tools. Even then, complete and deliver every
+independent coherent part first, and request only the smallest missing input or capability.
 
 Search high-signal paths, symbols, imports, callers, routes, configuration keys, failing tests, and adjacent implementations. Expand across evidence-backed dependencies until the requested scope is integrated. Do not read every file by default or repeatedly reread unchanged bodies.
 
