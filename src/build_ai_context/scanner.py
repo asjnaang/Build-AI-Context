@@ -26,6 +26,7 @@ from build_ai_context.constants import (
     EXTRA_EXCLUDED_PATTERNS,
     SPECIAL_FILENAMES,
 )
+from build_ai_context.formats import policy_for_path
 from build_ai_context.models import SourceFile
 
 
@@ -70,9 +71,7 @@ def _rebase_gitignore_lines(lines: Sequence[str], base: Path) -> List[str]:
 
 def load_gitignore_spec(root: Path) -> pathspec.PathSpec:
     """Load .gitignore patterns from the project root."""
-    return pathspec.PathSpec.from_lines(
-        "gitwildmatch", _read_gitignore_lines(root / ".gitignore")
-    )
+    return pathspec.PathSpec.from_lines("gitwildmatch", _read_gitignore_lines(root / ".gitignore"))
 
 
 def path_matches_any_pattern(rel_path: str, patterns: Iterable[str]) -> bool:
@@ -150,24 +149,34 @@ def is_probably_binary(path: Path) -> bool:
         return True
 
 
+def binary_lines_from_bytes(data: bytes) -> List[str]:
+    """Return binary bytes as wrapped Base64 text lines."""
+    encoded = base64.b64encode(data).decode("ascii")
+    return [encoded[index : index + 76] for index in range(0, len(encoded), 76)]
+
+
 def read_binary_lines(path: Path) -> List[str]:
     """Return binary file bytes as wrapped Base64 text lines."""
-    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-    return [encoded[index:index + 76] for index in range(0, len(encoded), 76)]
+    return binary_lines_from_bytes(path.read_bytes())
 
 
-def read_text_lines(path: Path) -> List[str]:
-    """Read a text file with multiple encoding attempts."""
+def text_lines_from_bytes(data: bytes) -> List[str]:
+    """Decode a byte snapshot with the scanner's supported encodings."""
     encodings = ["utf-8", "utf-8-sig", "latin-1"]
     last_error: Optional[Exception] = None
     for encoding in encodings:
         try:
-            return path.read_text(encoding=encoding).splitlines()
+            return data.decode(encoding).splitlines()
         except UnicodeDecodeError as exc:
             last_error = exc
     if last_error is not None:
-        return path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        return data.decode("utf-8", errors="ignore").splitlines()
     return []
+
+
+def read_text_lines(path: Path) -> List[str]:
+    """Read a text file with multiple encoding attempts."""
+    return text_lines_from_bytes(path.read_bytes())
 
 
 def sha256_of_lines(lines: Sequence[str]) -> str:
@@ -176,33 +185,48 @@ def sha256_of_lines(lines: Sequence[str]) -> str:
     return hashlib.sha256(joined).hexdigest()
 
 
+def _normalize_include_formats(values: Sequence[str]) -> set[str]:
+    """Normalize user-supplied extensions to lowercase dotted suffixes."""
+    normalized: set[str] = set()
+    for value in values:
+        extension = value.strip().lower()
+        if extension.startswith("*."):
+            extension = extension[1:]
+        elif extension.startswith("*"):
+            extension = extension[1:]
+        if extension and not extension.startswith("."):
+            extension = f".{extension}"
+        if extension not in {"", "."}:
+            normalized.add(extension)
+    return normalized
+
+
 def scan_supported_files(
     root: Path,
     skip_secret_files: bool,
     force_ignored_paths: Sequence[str] = (),
+    force_include_formats: Sequence[str] = (),
+    exclude_formats: Sequence[str] = (),
+    metadata_only: bool = False,
 ) -> Tuple[List[SourceFile], Dict[str, int]]:
-    """Scan supported files, optionally traversing explicitly requested ignored paths."""
+    """Scan supported files after applying authoritative format exclusions."""
     normalized_forced_paths = _normalize_selection_paths(force_ignored_paths, root)
+    normalized_forced_formats = _normalize_include_formats(force_include_formats)
+    normalized_excluded_formats = set(_normalize_exclude_formats(exclude_formats))
 
     def can_force_include(rel_path: Path) -> bool:
         rel = rel_path.as_posix().rstrip("/")
         is_requested = any(
-            rel == requested
-            or rel.startswith(requested + "/")
-            or requested.startswith(rel + "/")
+            rel == requested or rel.startswith(requested + "/") or requested.startswith(rel + "/")
             for requested in normalized_forced_paths
         )
         if not is_requested or ".git" in rel_path.parts:
             return False
-        return not (
-            skip_secret_files
-            and path_matches_any_pattern(rel, DEFAULT_SECRET_PATTERNS)
-        )
+        return not (skip_secret_files and path_matches_any_pattern(rel, DEFAULT_SECRET_PATTERNS))
+
     discovered: List[SourceFile] = []
     skipped_reasons: Dict[str, int] = defaultdict(int)
-    inherited_patterns: Dict[Path, List[str]] = {
-        root: _read_gitignore_lines(root / ".gitignore")
-    }
+    inherited_patterns: Dict[Path, List[str]] = {root: _read_gitignore_lines(root / ".gitignore")}
 
     for dirpath, dirnames, filenames in os.walk(root, topdown=True):
         current_dir = Path(dirpath)
@@ -232,6 +256,9 @@ def scan_supported_files(
         for filename in filenames:
             path = current_dir / filename
             rel_path = current_rel / filename
+            if path.suffix.lower() in normalized_excluded_formats:
+                skipped_reasons["excluded_format"] += 1
+                continue
             ignored, reason = is_ignored(rel_path, gitignore_spec, skip_secret_files)
             if ignored and can_force_include(rel_path):
                 ignored = False
@@ -239,18 +266,40 @@ def scan_supported_files(
                 skipped_reasons[reason] += 1
                 continue
             category = detect_category(path)
-            if not category:
+            force_format = path.suffix.lower() in normalized_forced_formats
+            if not category and not force_format:
                 skipped_reasons["unsupported_type"] += 1
                 continue
-            is_gzip = path.suffix.lower() == ".gz"
-            binary = is_probably_binary(path)
-            if binary and not is_gzip:
-                skipped_reasons["binary"] += 1
-                continue
+            if not category:
+                category = "config_docs"
+            format_policy = policy_for_path(path)
             try:
-                encoding = "base64" if is_gzip else "text"
-                lines = read_binary_lines(path) if is_gzip else read_text_lines(path)
-                raw_bytes = path.read_bytes()
+                encoding = format_policy.scanner_encoding
+                with path.open("rb") as source_stream:
+                    raw_bytes = source_stream.read()
+                    mode = os.fstat(source_stream.fileno()).st_mode & 0o777
+                binary = b"\x00" in raw_bytes[:4096]
+                if binary and format_policy.content_kind != "binary" and not force_format:
+                    skipped_reasons["binary"] += 1
+                    continue
+                if force_format and binary:
+                    encoding = "base64"
+                if metadata_only:
+                    lines = []
+                    if encoding == "base64":
+                        encoded_size = ((len(raw_bytes) + 2) // 3) * 4
+                        line_count = (encoded_size + 75) // 76
+                    else:
+                        line_count = raw_bytes.count(b"\n")
+                        if raw_bytes and not raw_bytes.endswith((b"\n", b"\r")):
+                            line_count += 1
+                else:
+                    lines = (
+                        binary_lines_from_bytes(raw_bytes)
+                        if encoding == "base64"
+                        else text_lines_from_bytes(raw_bytes)
+                    )
+                    line_count = len(lines)
                 size_bytes = len(raw_bytes)
                 sha256 = hashlib.sha256(raw_bytes).hexdigest()
             except OSError:
@@ -261,15 +310,18 @@ def scan_supported_files(
                     abs_path=path.resolve(),
                     rel_path=rel_path,
                     category=category,
-                    line_count=len(lines),
+                    line_count=line_count,
                     size_bytes=size_bytes,
                     sha256=sha256,
                     lines=lines,
                     encoding=encoding,
+                    snapshot_bytes=raw_bytes,
+                    mode=mode,
                 )
             )
     discovered.sort(key=lambda item: item.rel_path.as_posix())
     return discovered, dict(sorted(skipped_reasons.items()))
+
 
 # ---------------------------------------------------------------------------
 # Selection helpers
@@ -333,24 +385,17 @@ def _resolve_selection_token(
         return [candidate]
     if candidate in all_names:
         return sorted(
-            path for path in all_path_strs
-            if path == candidate or path.endswith("/" + candidate)
+            path for path in all_path_strs if path == candidate or path.endswith("/" + candidate)
         )
-    suffix_matches = sorted(
-        path for path in all_path_strs if path.endswith("/" + candidate)
-    )
+    suffix_matches = sorted(path for path in all_path_strs if path.endswith("/" + candidate))
     if suffix_matches:
         return suffix_matches
     if candidate.startswith(".") and "/" not in candidate:
-        extension_matches = sorted(
-            path for path in all_path_strs if Path(path).suffix == candidate
-        )
+        extension_matches = sorted(path for path in all_path_strs if Path(path).suffix == candidate)
         if extension_matches:
             return extension_matches
     if "/" not in candidate and " " not in candidate:
-        stem_matches = sorted(
-            path for path in all_path_strs if Path(path).stem == candidate
-        )
+        stem_matches = sorted(path for path in all_path_strs if Path(path).stem == candidate)
         if stem_matches:
             return stem_matches
     directory_prefix = candidate.rstrip("/") + "/"

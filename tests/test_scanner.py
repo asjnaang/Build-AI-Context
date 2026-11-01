@@ -97,7 +97,6 @@ class TestParseIntelligentInput:
         assert "README.md" in result
         assert "docs/guide.md/index.md" in result
 
-
     def test_paths_with_spaces_do_not_select_unrelated_files(self, tmp_path):
         requested = [
             "services/data/North Region Config_JSON_Consolidate_v1.81.json",
@@ -182,15 +181,17 @@ class TestParseIntelligentInput:
                 child.write_text("content")
                 file_paths = [child]
             for file_path in file_paths:
-                files.append(SourceFile(
-                    abs_path=file_path,
-                    rel_path=file_path.relative_to(tmp_path),
-                    category="config_docs",
-                    line_count=1,
-                    size_bytes=7,
-                    sha256="dummy",
-                    lines=["content"],
-                ))
+                files.append(
+                    SourceFile(
+                        abs_path=file_path,
+                        rel_path=file_path.relative_to(tmp_path),
+                        category="config_docs",
+                        line_count=1,
+                        size_bytes=7,
+                        sha256="dummy",
+                        lines=["content"],
+                    )
+                )
 
         raw = (
             f"{tmp_path / requested[0]}, {tmp_path / requested[1]}, "
@@ -212,6 +213,7 @@ class TestParseIntelligentInput:
         root, files = sample_files
         result = parse_intelligent_input("read main documentation", files, root)
         assert result == []
+
 
 class TestFilterFilesByPaths:
     """Tests for filter_files_by_paths function."""
@@ -506,9 +508,7 @@ class TestForceIgnoredTraversal:
             force_ignored_paths=[str(requested)],
         )
 
-        assert [item.rel_path.as_posix() for item in files] == [
-            ".gen_files/requested/include.txt"
-        ]
+        assert [item.rel_path.as_posix() for item in files] == [".gen_files/requested/include.txt"]
 
     def test_force_ignored_does_not_bypass_secret_safety(self, tmp_path):
         generated = tmp_path / ".gen_files" / "requested"
@@ -522,9 +522,7 @@ class TestForceIgnoredTraversal:
             force_ignored_paths=[str(generated)],
         )
 
-        assert [item.rel_path.as_posix() for item in files] == [
-            ".gen_files/requested/safe.txt"
-        ]
+        assert [item.rel_path.as_posix() for item in files] == [".gen_files/requested/safe.txt"]
         assert sum(skipped.values()) == 1
 
 
@@ -549,9 +547,7 @@ def test_expand_explicit_path_inputs_splits_quoted_existing_directories(tmp_path
 class TestFinalSetExclusions:
     def test_excludes_folder_and_normalized_formats(self, sample_files):
         root, files = sample_files
-        kept, paths, formats = exclude_files(
-            files, root, ["docs"], ["py", "*.PY", ".py"]
-        )
+        kept, paths, formats = exclude_files(files, root, ["docs"], ["py", "*.PY", ".py"])
         assert [item.rel_path.as_posix() for item in kept] == ["README.md"]
         assert paths == ["docs/guide.md/index.md"]
         assert formats == [".py"]
@@ -614,3 +610,89 @@ def test_scan_supports_gzip_as_base64_with_original_hash(tmp_path):
     assert base64.b64decode("".join(source.lines)) == archive.read_bytes()
     assert source.size_bytes == len(archive.read_bytes())
     assert source.sha256 == hashlib.sha256(archive.read_bytes()).hexdigest()
+
+
+def test_scan_supports_pdf_as_base64_with_original_hash(tmp_path):
+    """PDF bytes are preserved as Base64 for readable text bundles."""
+    import base64
+    import hashlib
+
+    content = b"%PDF-1.7\n\x00binary-pdf-content\n%%EOF\n"
+    pdf = tmp_path / "report.pdf"
+    pdf.write_bytes(content)
+
+    files, skipped = scan_supported_files(tmp_path, skip_secret_files=True)
+
+    assert skipped.get("binary", 0) == 0
+    assert len(files) == 1
+    source = files[0]
+    assert source.rel_path == Path("report.pdf")
+    assert source.encoding == "base64"
+    assert base64.b64decode("".join(source.lines)) == content
+    assert source.size_bytes == len(content)
+    assert source.sha256 == hashlib.sha256(content).hexdigest()
+
+
+def test_force_include_formats_adds_unknown_text_and_binary_files(tmp_path):
+    """Explicit formats include unknown text and binary files without changing defaults."""
+    rust = tmp_path / "main.rs"
+    database = tmp_path / "cache.sqlite3"
+    other = tmp_path / "asset.unknown"
+    rust.write_text("fn main() {}\n")
+    database.write_bytes(b"SQLite format 3\x00\x01\x02")
+    other.write_text("ignore me\n")
+
+    files, skipped = scan_supported_files(
+        tmp_path,
+        skip_secret_files=True,
+        force_include_formats=["rs", "*.sqlite3"],
+    )
+
+    by_name = {source.rel_path.name: source for source in files}
+    assert set(by_name) == {"main.rs", "cache.sqlite3"}
+    assert by_name["main.rs"].encoding == "text"
+    assert by_name["cache.sqlite3"].encoding == "base64"
+    assert skipped["unsupported_type"] == 1
+
+
+def test_force_include_formats_does_not_bypass_ignore_or_secret_rules(tmp_path):
+    """Format overrides do not weaken path and secret protections."""
+    (tmp_path / ".gitignore").write_text("ignored.rs\n")
+    (tmp_path / "ignored.rs").write_text("fn ignored() {}\n")
+    (tmp_path / ".env.rs").write_text("TOKEN=secret\n")
+
+    files, _ = scan_supported_files(
+        tmp_path,
+        skip_secret_files=True,
+        force_include_formats=[".rs"],
+    )
+
+    assert files == []
+
+
+def test_metadata_only_scan_preserves_bytes_without_materializing_content_lines(tmp_path):
+    """Compressed scanning keeps exact bytes but avoids large decoded/Base64 line lists."""
+    import hashlib
+
+    text = tmp_path / "large.json"
+    binary = tmp_path / "cache.sqlite3"
+    text_bytes = (b'{"value": 1}\n' * 5000)
+    binary_bytes = b"SQLite format 3\x00" + bytes(range(256)) * 1000
+    text.write_bytes(text_bytes)
+    binary.write_bytes(binary_bytes)
+
+    files, _ = scan_supported_files(
+        tmp_path,
+        skip_secret_files=True,
+        force_include_formats=[".sqlite3"],
+        metadata_only=True,
+    )
+
+    by_name = {source.rel_path.name: source for source in files}
+    assert by_name["large.json"].lines == []
+    assert by_name["large.json"].line_count == 5000
+    assert by_name["large.json"].snapshot_bytes == text_bytes
+    assert by_name["cache.sqlite3"].lines == []
+    encoded_size = ((len(binary_bytes) + 2) // 3) * 4
+    assert by_name["cache.sqlite3"].line_count == (encoded_size + 75) // 76
+    assert by_name["cache.sqlite3"].sha256 == hashlib.sha256(binary_bytes).hexdigest()
