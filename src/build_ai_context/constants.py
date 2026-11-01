@@ -16,7 +16,6 @@ DEFAULT_TEXT_ENCODING: str = "utf-8"
 # LARGE_FILE_SKIP_LINES is the default for --max-file-lines (CLI-overridable).
 LARGE_FILE_WARN_LINES: int = 1500
 LARGE_FILE_SKIP_LINES: int = 3000
-
 # Category extensions mapping
 CATEGORY_EXTENSIONS: Dict[str, Set[str]] = {
     "python": {".py"},
@@ -41,7 +40,8 @@ CATEGORY_EXTENSIONS: Dict[str, Set[str]] = {
         ".log",
         ".sql",
         ".csv",
-        ".gz"
+        ".gz",
+        ".pdf",
     },
 }
 

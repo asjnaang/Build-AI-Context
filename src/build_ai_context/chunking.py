@@ -13,6 +13,7 @@ from build_ai_context.constants import (
     LARGE_FILE_SKIP_LINES,
     LARGE_FILE_WARN_LINES,
 )
+from build_ai_context.formats import policy_for_path
 from build_ai_context.models import FileChunk, SourceFile
 from build_ai_context.redact import redact_text
 
@@ -70,7 +71,6 @@ def chunk_overhead_lines(redact: bool = False) -> int:
         encoding="text",
     )
     return len(render_chunk_block(dummy, redact).splitlines()) - 1
-
 
 
 def _json_shape(value: Any) -> object:
@@ -147,19 +147,22 @@ def force_bundle_json_files(
             payload = json.loads("\n".join(source.lines))
         except (TypeError, json.JSONDecodeError) as exc:
             transformed.append(source)
-            events.append({
-                "path": source.rel_path.as_posix(),
-                "reason": "force_bundle_invalid_json",
-                "line_count": source.line_count,
-                "threshold": threshold,
-                "error": str(exc),
-            })
+            events.append(
+                {
+                    "path": source.rel_path.as_posix(),
+                    "reason": "force_bundle_invalid_json",
+                    "line_count": source.line_count,
+                    "threshold": threshold,
+                    "error": str(exc),
+                }
+            )
             continue
         replacement = None
         details = None
         for per_shape in (5, 4, 3):
             sampled, removed, groups = _sample_json(payload, per_shape)
             text = json.dumps(sampled, indent=2, ensure_ascii=False)
+            snapshot_bytes = text.encode("utf-8")
             lines = text.splitlines()
             if len(lines) < threshold:
                 replacement = SourceFile(
@@ -167,10 +170,12 @@ def force_bundle_json_files(
                     rel_path=source.rel_path,
                     category=source.category,
                     line_count=len(lines),
-                    size_bytes=len(text.encode("utf-8")),
-                    sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                    size_bytes=len(snapshot_bytes),
+                    sha256=hashlib.sha256(snapshot_bytes).hexdigest(),
                     lines=lines,
                     encoding=source.encoding,
+                    snapshot_bytes=snapshot_bytes,
+                    mode=source.mode,
                 )
                 details = {
                     "path": source.rel_path.as_posix(),
@@ -185,16 +190,19 @@ def force_bundle_json_files(
                 break
         if replacement is None:
             transformed.append(source)
-            events.append({
-                "path": source.rel_path.as_posix(),
-                "reason": "force_bundle_minimum_sample_exceeds_threshold",
-                "line_count": source.line_count,
-                "threshold": threshold,
-            })
+            events.append(
+                {
+                    "path": source.rel_path.as_posix(),
+                    "reason": "force_bundle_minimum_sample_exceeds_threshold",
+                    "line_count": source.line_count,
+                    "threshold": threshold,
+                }
+            )
         else:
             transformed.append(replacement)
             events.append(details)
     return transformed, events
+
 
 def split_into_chunks(
     files: Sequence[SourceFile],
@@ -219,9 +227,7 @@ def split_into_chunks(
     chunks: List[FileChunk] = []
     skipped: List[Dict[str, object]] = []
     overhead = chunk_overhead_lines(redact)
-    skip_threshold = (
-        LARGE_FILE_SKIP_LINES if max_file_lines is None else max_file_lines
-    )
+    skip_threshold = LARGE_FILE_SKIP_LINES if max_file_lines is None else max_file_lines
 
     for source in files:
         lines = source.lines
@@ -229,8 +235,9 @@ def split_into_chunks(
         if total_lines == 0:
             continue
 
+        format_policy = policy_for_path(source.rel_path)
         # Check if file exceeds skip threshold (0 = disabled / unlimited)
-        if skip_threshold > 0 and total_lines >= skip_threshold:
+        if format_policy.line_limits_apply and skip_threshold > 0 and total_lines >= skip_threshold:
             skipped.append(
                 {
                     "path": source.rel_path.as_posix(),
@@ -242,7 +249,7 @@ def split_into_chunks(
             continue
 
         # Warn for large files that are still included
-        if total_lines >= LARGE_FILE_WARN_LINES:
+        if format_policy.line_limits_apply and total_lines >= LARGE_FILE_WARN_LINES:
             skipped.append(
                 {
                     "path": source.rel_path.as_posix(),

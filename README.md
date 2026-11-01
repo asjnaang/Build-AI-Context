@@ -111,13 +111,31 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `--all` | Export everything supported without prompts | `baic . --all` |
 | `--max-file-lines` | Skip repo source files with ≥ N lines when bundling (default: 3000; `0` = no limit). Bundle output size stays fixed at 8000 lines. | `--max-file-lines 10000` |
 | `--force-ignored` | Include supported files under explicit `--paths` even when ignored; secret-like files still require `--include-secret-files` | `--paths .gen_files/reports --force-ignored` |
+| `--force-include-formats` | Include otherwise unsupported extensions in `tar-gz` transport; accepts `rs`, `.rs`, or `*.rs` | `--force-include-formats .rs .sqlite3` |
 | `--force-bundle` | Bundle selected files regardless of the per-file line limit; oversized JSON is sampled when possible | `--paths reports --force-bundle` |
-| `--transport` | `text` (default) or compressed `tar-gz` Base64 text payload | `--transport text` |
+| `--transport` | `tar-gz` (default) or readable `text` bundles | `--transport text` |
+| `--split` | Split `tar-gz` transport into deterministic payloads capped at 18 MiB each | `--split` |
+| `--binary-policy` | `include` (default), `skip`, or `compressed-only` | `--binary-policy compressed-only` |
 | `--output-dir` | Custom output folder | `--output-dir ./my-bundles` |
 | `--project-overview` | Generate architecture overview | `--project-overview` |
 | `--include-secret-files` | Include .env, keys, etc. (careful!) | `--include-secret-files` |
 | `--redact` | Redact secrets from output | `--redact` |
 | `--version` | Show version | `--version` |
+
+### Including project-specific formats
+
+Use `--force-include-formats` when a project contains extensions that are not in the built-in
+category registry and the output uses the default `tar-gz` transport:
+
+```bash
+baic . --all --force-include-formats .rs .sqlite3
+```
+
+The override is intentionally rejected with `--transport text`. Compressed transport preserves
+the original bytes, while readable text bundles would need a stable text or binary representation
+policy. Existing ignore rules, secret-file protection, and explicit exclusions still apply. A forced
+binary file is detected and represented internally as Base64, then archived from its original byte
+snapshot.
 
 ## Categories Supported
 
@@ -142,12 +160,12 @@ Shortcuts you can use: `py`→`python`, `ts`→`typescript`, `js`→`javascript`
 
 ## Output Files
 
-The default `text` transport preserves the existing behavior and commands: BAIC writes readable, framed
-`*_bundle_*.txt` files capped at 8000 rendered lines, one manifest JSON, and `baic_prompt_text.md`.
+The default `tar-gz` transport keeps the generated package within the three-attachment workflow: one payload text file, one manifest, and one `baic_prompt.md`. The optional `text` transport preserves the readable framed-bundle behavior: BAIC writes readable, framed
+`*_bundle_*.txt` files capped at 8000 rendered lines, one manifest JSON, and the single `baic_prompt.md`.
 
 Use `--transport tar-gz` when attachment count matters. BAIC deterministically TARs and Gzip-compresses the
 selected exact source bytes, Base64-encodes the archive, and writes one `*_payload_*.txt` attachment instead of
-a binary archive. The output is one payload text file, one manifest JSON, and `baic_prompt_gzip.md`. The
+a binary archive. The output is one payload text file, one manifest JSON, and the single `baic_prompt.md`. The
 manifest validates the payload, Base64 body, decoded archive, and every source entry.
 
 Examples:
@@ -161,8 +179,25 @@ baic . --non-interactive --paths src tests
 baic . --all --transport tar-gz
 ```
 
-Redaction remains available with the default `text` transport; `--redact` cannot be combined with `--transport tar-gz` because compressed transport preserves exact selected bytes. `tar-gz` is an internal archive representation;
+Redaction remains available with the optional `text` transport; `--redact` cannot be combined with `--transport tar-gz` because compressed transport preserves exact selected bytes. `tar-gz` is an internal archive representation;
 no `.tar.gz`, `.gz`, or `.zip` attachment remains in the generated output directory.
+
+PDF files are binary. With `--transport text`, BAIC wraps their original bytes as Base64 in the readable
+bundle, just as it does for `.gz` files; the manifest records `encoding: base64`, the original byte size,
+and the original SHA-256. With `--transport tar-gz`, the PDF is stored byte-for-byte in the internal TAR
+before the payload is Gzip-compressed and Base64-encoded. PDFs larger than 15 MiB are called out in the
+manifest warnings and in the completion output. Because most PDFs already compress their streams, Gzip may
+not reduce their size significantly.
+
+Use `--binary-policy include` to retain supported binary files in either transport, `skip` to omit them, or
+`compressed-only` to omit them from readable text bundles while retaining them with `--transport tar-gz`.
+BAIC never silently changes transport. The manifest records selected files, transported files, policy omissions,
+and their counts separately so downstream agents can distinguish user selection from delivered source.
+
+Format behavior is defined centrally in `src/build_ai_context/formats.py`. Add future binary formats there instead
+of duplicating scanner, line-limit, redaction, transport, and warning conditions across modules. Export planning is
+transport-neutral; renderers consume an explicit plan rather than inferring compressed archive membership from
+text-bundle chunks.
 
 ## Filetree Feature
 
@@ -265,6 +300,9 @@ Redaction targets: API keys, tokens, passwords, JWTs, AWS keys, GitHub tokens, e
 
 ### Large Files
 
+Line thresholds apply only to textual source formats. Base64 is a transport representation, so binary formats are
+controlled by `--binary-policy` and byte-size warnings rather than by encoded line count.
+
 - **>= 1500 lines**: Exported and reported under manifest `warnings`
 - **>= 3000 lines**: Excluded by default; interactive mode lets you select files to include anyway
 
@@ -334,8 +372,10 @@ baic . --non-interactive --paths src/components src/utils \
     --task "Review these files and fix the issues we discussed."
 ```
 
-The task replaces the placeholder under `## Task` in the generated transport-specific prompt:
-`baic_prompt_text.md` for `text`, or `baic_prompt_gzip.md` for `tar-gz`. Omit `--task` to keep the placeholder.
+The task replaces the placeholder under `## Task` in the transport-specific source template. Both transports
+still generate the same attachment name, `baic_prompt.md`: `tar-gz` uses `baic_prompt_gzip.md`, while `text`
+uses `baic_prompt_text.md`. This preserves transport-correct extraction instructions without increasing the
+number of generated attachments. Omit `--task` to keep the placeholder.
 
 For long multiline tasks, JSON, quotes, or other shell-sensitive content, copy the
 complete task and use `--tc` (or `--task-clipboard`). The CLI reads the clipboard
@@ -378,7 +418,7 @@ baic
 
 1. **Run the exporter**: `baic . --categories python`
 2. **Upload the generated text**: Attach readable bundle files, or the single payload text file produced by `--transport tar-gz`.
-3. **Upload the manifest and prompt**: Attach the manifest and the generated prompt matching the transport.
+3. **Upload the manifest and prompt**: Attach the manifest and the generated `baic_prompt.md`.
 4. **Ask away**: The AI validates and extracts exact repository files before working.
 
 Example prompt to AI:

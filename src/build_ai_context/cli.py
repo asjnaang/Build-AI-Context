@@ -5,6 +5,7 @@ Command-line interface for build_ai_context package.
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -28,6 +29,7 @@ from build_ai_context.constants import (
 )
 from build_ai_context.exporter import CodeExporter
 from build_ai_context.models import SourceFile
+from build_ai_context.planning import build_export_plan
 from build_ai_context.scanner import expand_explicit_path_inputs
 from build_ai_context.update_source_file_headers import DEFAULT_EXCLUDES, walk_and_update
 
@@ -68,6 +70,17 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--force-include-formats",
+        nargs="+",
+        default=[],
+        metavar="EXT",
+        help=(
+            "Include otherwise unsupported file extensions with --transport tar-gz. "
+            "Values may be written as rs, .rs, or *.rs. Binary files are preserved "
+            "byte-for-byte in the compressed payload."
+        ),
+    )
+    parser.add_argument(
         "--force-bundle",
         action="store_true",
         help=(
@@ -80,8 +93,26 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["tar-gz", "text"],
         default="tar-gz",
         help=(
-            "Context transport (default: text). text creates readable framed bundles; "
+            "Context transport (default: tar-gz). text creates readable framed bundles; "
             "tar-gz creates one Base64 text payload containing a deterministic tar.gz archive."
+        ),
+    )
+    parser.add_argument(
+        "--split",
+        action="store_true",
+        help=(
+            "Split tar-gz transport into deterministic Base64 payload parts, each no larger "
+            "than 18 MiB. Default tar-gz behavior remains one payload."
+        ),
+    )
+    parser.add_argument(
+        "--binary-policy",
+        choices=["include", "skip", "compressed-only"],
+        default="include",
+        help=(
+            "Binary-source policy (default: include). include Base64-wraps binary "
+            "formats in text transport; skip excludes them; compressed-only includes "
+            "them only with --transport tar-gz."
         ),
     )
     parser.add_argument(
@@ -194,15 +225,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-
 def resolve_task_content(args) -> str | None:
     """Return task text from --task or the macOS clipboard."""
     if not getattr(args, "task_clipboard", False):
         return getattr(args, "task", None)
     try:
-        completed = subprocess.run(
-            ["pbpaste"], check=True, capture_output=True, text=True
-        )
+        completed = subprocess.run(["pbpaste"], check=True, capture_output=True, text=True)
     except FileNotFoundError as exc:
         raise ValueError("--task-clipboard/--tc requires the macOS pbpaste command") from exc
     except subprocess.CalledProcessError as exc:
@@ -210,6 +238,7 @@ def resolve_task_content(args) -> str | None:
     if not completed.stdout:
         raise ValueError("The macOS clipboard does not contain task text")
     return completed.stdout
+
 
 def main() -> int:
     """Main entry point for the CLI."""
@@ -257,7 +286,7 @@ def run_quick_artifacts(args) -> int:
             print(f"Error: Project root is not a directory: {root}", file=sys.stderr)
             return 1
 
-        exporter.print_info(f"Scanning project: {root}")
+        exporter.print_path("Scanning project: ", root, style="cyan")
 
         all_files, _skipped_reasons = exporter.scan_supported_files(root, skip_secret_files=True)
         if not all_files:
@@ -282,9 +311,7 @@ def run_quick_artifacts(args) -> int:
 
         if getattr(args, "graph", False):
             output_format = getattr(args, "output_format", "txt") or "txt"
-            graph_content = exporter.generate_graph(
-                all_files, root, output_format=output_format
-            )
+            graph_content = exporter.generate_graph(all_files, root, output_format=output_format)
             ext = "json" if output_format == "json" else "txt"
             graph_name = f"{folder_name}_code_graph_{timestamp}.{ext}"
             output_root = exporter.generated_files_dir(root)
@@ -321,6 +348,12 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         if args.max_file_lines < 0:
             print("Error: --max-file-lines must be >= 0 (0 = unlimited)", file=sys.stderr)
             return 1, None, None
+        if args.force_include_formats and args.transport != "tar-gz":
+            print(
+                "Error: --force-include-formats requires --transport tar-gz",
+                file=sys.stderr,
+            )
+            return 1, None, None
 
         # Output bundle size is intentionally fixed; only source-file limit is overridable.
         bundle_max_lines = DEFAULT_MAX_LINES
@@ -330,7 +363,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         if pre_scanned:
             all_files, skipped_reasons = pre_scanned
         else:
-            exporter.print_info(f"Scanning project: {root}")
+            exporter.print_path("Scanning project: ", root, style="cyan")
             forced_scan_paths = (
                 expand_explicit_path_inputs(args.paths, root)
                 if getattr(args, "force_ignored", False)
@@ -340,6 +373,9 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
                 root,
                 skip_secret_files=skip_secret_files,
                 force_ignored_paths=forced_scan_paths,
+                force_include_formats=args.force_include_formats,
+                exclude_formats=args.exclude_formats,
+                metadata_only=args.transport == "tar-gz",
             )
 
         if not all_files:
@@ -348,7 +384,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             )
             return 0, None, None
 
-        exporter.print_info(f"Detected {len(all_files)} supported text file(s).")
+        exporter.print_info(f"Detected {len(all_files)} supported file(s).")
 
         if args.non_interactive:
             if args.keywords:
@@ -374,9 +410,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
                 path_inputs = args.paths
                 if args.paths:
                     raw_path_input = "\n".join(args.paths)
-                    path_inputs = exporter.parse_intelligent_input(
-                        raw_path_input, all_files, root
-                    )
+                    path_inputs = exporter.parse_intelligent_input(raw_path_input, all_files, root)
                     if not path_inputs:
                         path_inputs = args.paths
                 selected_files, selection_metadata = exporter.non_interactive_select_files(
@@ -399,7 +433,9 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         selection_metadata["excluded_paths"] = excluded_paths
         selection_metadata["excluded_formats"] = excluded_formats
         if not selected_files:
-            exporter.print_warning("No files remain after applying exclusions. Nothing was exported.")
+            exporter.print_warning(
+                "No files remain after applying exclusions. Nothing was exported."
+            )
             return 0, None, None
 
         exporter.print_info(
@@ -407,21 +443,39 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         )
 
         force_bundle_events: List[dict] = []
-        if args.force_bundle:
+        if args.force_bundle and args.transport == "text":
             selected_files, force_bundle_events = exporter.force_bundle_json_files(
                 selected_files, args.max_file_lines
             )
-        effective_max_file_lines = 0 if args.force_bundle else args.max_file_lines
-        chunks, split_items = exporter.split_into_chunks(
-            selected_files,
-            bundle_max_lines,
-            max_file_lines=effective_max_file_lines,
-        )
-        warnings = [item for item in split_items if item.get("reason") == "large_file_warning"]
-        warnings.extend(force_bundle_events)
-        skipped_during_split = [
-            item for item in split_items if item.get("reason") != "large_file_warning"
-        ]
+        export_plan = build_export_plan(selected_files, args.transport, args.binary_policy)
+        transport_files = list(export_plan.transport_files)
+        if args.transport == "tar-gz":
+            chunks = []
+            warnings = [
+                {
+                    "path": source.rel_path.as_posix(),
+                    "reason": "large_file_warning",
+                    "line_count": source.line_count,
+                    "threshold": args.max_file_lines,
+                }
+                for source in transport_files
+                if args.max_file_lines and source.line_count >= args.max_file_lines
+            ]
+            skipped_during_split = []
+        else:
+            effective_max_file_lines = 0 if args.force_bundle else args.max_file_lines
+            chunks, split_items = exporter.split_into_chunks(
+                transport_files,
+                bundle_max_lines,
+                max_file_lines=effective_max_file_lines,
+            )
+            warnings = [
+                item for item in split_items if item.get("reason") == "large_file_warning"
+            ]
+            warnings.extend(force_bundle_events)
+            skipped_during_split = [
+                item for item in split_items if item.get("reason") != "large_file_warning"
+            ]
         if not args.non_interactive:
             forced_files = select_oversized_files_for_inclusion(
                 selected_files, skipped_during_split, exporter
@@ -438,7 +492,10 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
                 skipped_during_split = [
                     item for item in skipped_during_split if item.get("path") not in forced_paths
                 ]
-        bundles, skipped_during_pack = exporter.pack_chunks(chunks, bundle_max_lines)
+        if args.transport == "tar-gz":
+            bundles, skipped_during_pack = [], []
+        else:
+            bundles, skipped_during_pack = exporter.pack_chunks(chunks, bundle_max_lines)
         skipped_during_processing = skipped_during_split + skipped_during_pack
 
         output_dir = (
@@ -461,6 +518,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         manifest_path = exporter.write_bundles_and_manifest(
             root=root,
             selected_files=selected_files,
+            transport_files=transport_files,
             bundles=bundles,
             output_dir=output_dir,
             max_lines=bundle_max_lines,
@@ -475,6 +533,9 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             timestamp=timestamp,
             task=task,
             transport=args.transport,
+            binary_policy=args.binary_policy,
+            policy_omissions=export_plan.omitted_files,
+            split=args.split,
         )
 
         overview_path = None
@@ -489,34 +550,29 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             )
 
         exporter.print_success("\nExport complete.")
-        exporter.print_success(f"Output directory : {output_dir}")
-        exporter.print_success(f"Manifest         : {manifest_path}")
+        exporter.print_path("Output directory : ", output_dir)
+        exporter.print_path("Manifest         : ", manifest_path)
         if overview_path is not None:
-            exporter.print_success(f"Project overview : {overview_path}")
+            exporter.print_path("Project overview : ", overview_path)
+        written_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         exporter.print_success(
-            f"Packages created : {1 if args.transport == 'tar-gz' else len(bundles)}"
+            f"Packages created : {written_manifest.get('payload_count', len(bundles))}"
         )
         exporter.print_success(f"Files exported   : {len(selected_files)}")
 
         if warnings:
             exporter.print_warning("\nFiles included with warnings:")
             for entry in warnings:
-                exporter.print_warning(f"  - {entry}")
+                exporter.print_warning_entry(entry, root)
         if skipped_during_processing:
             exporter.print_warning("\nFiles/chunks excluded during processing:")
             for entry in skipped_during_processing:
-                exporter.print_warning(f"  - {entry}")
+                exporter.print_warning_entry(entry, root)
 
         if not args.non_interactive:
-            prompt_name = (
-                "baic_prompt_gzip.md"
-                if args.transport == "tar-gz"
-                else "baic_prompt_text.md"
-            )
+            prompt_name = "baic_prompt.md"
             package_name = (
-                "Base64 payload text file"
-                if args.transport == "tar-gz"
-                else "text bundle file(s)"
+                "Base64 payload text file" if args.transport == "tar-gz" else "text bundle file(s)"
             )
             print(
                 f"\n📝 Open '{prompt_name}' in the output directory and replace the "
