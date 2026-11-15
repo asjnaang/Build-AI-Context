@@ -7,6 +7,7 @@ from unittest.mock import patch
 from build_ai_context.scanner import (
     parse_intelligent_input,
     filter_files_by_paths,
+    exclude_files,
     _normalize_selection_paths,
     scan_supported_files,
 )
@@ -95,6 +96,123 @@ class TestParseIntelligentInput:
         result = parse_intelligent_input(".md", files, root)
         assert "README.md" in result
         assert "docs/guide.md/index.md" in result
+
+    def test_paths_with_spaces_do_not_select_unrelated_files(self, tmp_path):
+        requested = [
+            "services/data/North Region Config_JSON_Consolidate_v1.81.json",
+            "services/data/west desk config_consolidated json_v1.8.json",
+            "services/data/east desk config_consolidated json_v18.json",
+        ]
+        unrelated = [
+            "frontend/Settings/SettingsPanel.tsx",
+            "frontend/InputForms/InputAccordion.tsx",
+            "services/compare_search_algorithms.py",
+        ]
+        files = []
+        for relative_path in requested + unrelated:
+            path = tmp_path / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("content")
+            files.append(
+                SourceFile(
+                    abs_path=path,
+                    rel_path=Path(relative_path),
+                    category="config_docs",
+                    line_count=1,
+                    size_bytes=7,
+                    sha256="dummy",
+                    lines=["content"],
+                )
+            )
+
+        raw = "\n".join(requested)
+        result = parse_intelligent_input(raw, files, tmp_path)
+
+        assert result == requested
+        assert not set(result).intersection(unrelated)
+
+    def test_mixed_line_and_comma_input_preserves_spaces(self, tmp_path):
+        requested = [
+            "services/data/North Region Config_JSON_Consolidate_v1.81.json",
+            "services/data/plain.json",
+            "frontend/src/main.tsx",
+        ]
+        files = []
+        for relative_path in requested:
+            path = tmp_path / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("content")
+            files.append(
+                SourceFile(
+                    abs_path=path,
+                    rel_path=Path(relative_path),
+                    category="config_docs",
+                    line_count=1,
+                    size_bytes=7,
+                    sha256="dummy",
+                    lines=["content"],
+                )
+            )
+
+        raw = f"{requested[0]},\n{requested[1]}; {requested[2]}"
+        result = parse_intelligent_input(raw, files, tmp_path)
+
+        assert result == requested
+
+    def test_combined_comma_space_and_line_separators_select_all_paths(self, tmp_path):
+        requested = [
+            "data/Sampled_master_files",
+            "docs/master_data_import_runbook.md",
+            "scripts/master_data_db.sh",
+            "scripts/import_master_data.py",
+            "scripts/create_master_data_postgres.sql",
+            "data/path with spaces/reference data.json",
+        ]
+        files = []
+        for relative_path in requested:
+            path = tmp_path / relative_path
+            if path.suffix:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("content")
+                file_paths = [path]
+            else:
+                path.mkdir(parents=True, exist_ok=True)
+                child = path / "sample.json"
+                child.write_text("content")
+                file_paths = [child]
+            for file_path in file_paths:
+                files.append(
+                    SourceFile(
+                        abs_path=file_path,
+                        rel_path=file_path.relative_to(tmp_path),
+                        category="config_docs",
+                        line_count=1,
+                        size_bytes=7,
+                        sha256="dummy",
+                        lines=["content"],
+                    )
+                )
+
+        raw = (
+            f"{tmp_path / requested[0]}, {tmp_path / requested[1]}, "
+            f"{tmp_path / requested[2]} {tmp_path / requested[3]} "
+            f"{tmp_path / requested[4]}\n{tmp_path / requested[5]}"
+        )
+        result = parse_intelligent_input(raw, files, tmp_path)
+
+        assert result == [
+            "data/Sampled_master_files/sample.json",
+            "docs/master_data_import_runbook.md",
+            "scripts/master_data_db.sh",
+            "scripts/import_master_data.py",
+            "scripts/create_master_data_postgres.sql",
+            "data/path with spaces/reference data.json",
+        ]
+
+    def test_unresolved_text_does_not_become_substring_search(self, sample_files):
+        root, files = sample_files
+        result = parse_intelligent_input("read main documentation", files, root)
+        assert result == []
 
 
 class TestFilterFilesByPaths:
@@ -306,5 +424,275 @@ class TestCategorySelection:
         assert result == expected
 
 
+class TestGeneratedFilesTraversal:
+    def test_generated_files_directory_is_pruned_without_gitignore(self, tmp_path):
+        generated = tmp_path / ".gen_files"
+        generated.mkdir()
+        (generated / "bundle.txt").write_text("generated")
+        (tmp_path / "app.py").write_text("print('included')")
+        files, skipped = scan_supported_files(tmp_path, skip_secret_files=True)
+        assert [item.rel_path.as_posix() for item in files] == ["app.py"]
+        assert skipped["default_excluded_dir"] == 1
+
+
+class TestGitignoreAwareTraversal:
+    """Regression coverage for pruning and nested repository ignore rules."""
+
+    def test_root_gitignore_prunes_ignored_repository_before_descent(self, tmp_path, monkeypatch):
+        included = tmp_path / "frontend"
+        ignored = tmp_path / "unused-repo"
+        included.mkdir()
+        ignored.mkdir()
+        (included / "app.ts").write_text("export const app = true")
+        (ignored / "never-read.py").write_text("raise AssertionError")
+        (tmp_path / ".gitignore").write_text("unused-repo/\n")
+
+        original_read = Path.read_text
+
+        def guarded_read(path, *args, **kwargs):
+            if path.name == "never-read.py":
+                raise AssertionError("ignored repository was traversed")
+            return original_read(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", guarded_read)
+        files, skipped = scan_supported_files(tmp_path, skip_secret_files=True)
+
+        assert [item.rel_path.as_posix() for item in files] == ["frontend/app.ts"]
+        assert skipped[".gitignore"] == 1
+
+    def test_nested_gitignore_is_applied_within_each_repository(self, tmp_path):
+        repo = tmp_path / "backend"
+        generated = repo / "generated"
+        generated.mkdir(parents=True)
+        (repo / ".gitignore").write_text("generated/\n")
+        (repo / "main.py").write_text("print('included')")
+        (generated / "large.py").write_text("print('ignored')")
+
+        files, skipped = scan_supported_files(tmp_path, skip_secret_files=True)
+
+        assert [item.rel_path.as_posix() for item in files] == ["backend/main.py"]
+        assert skipped[".gitignore"] == 1
+
+
+class TestForceIgnoredTraversal:
+    def test_explicit_ignored_generated_path_can_be_scanned(self, tmp_path):
+        generated = tmp_path / ".gen_files" / "git_commit_exports" / "run"
+        generated.mkdir(parents=True)
+        (generated / "history.txt").write_text("commit history")
+        (tmp_path / ".gitignore").write_text(".gen_files/**\n")
+        (tmp_path / "app.py").write_text("print('normal')")
+
+        files, skipped = scan_supported_files(
+            tmp_path,
+            skip_secret_files=True,
+            force_ignored_paths=[str(generated)],
+        )
+
+        assert [item.rel_path.as_posix() for item in files] == [
+            ".gen_files/git_commit_exports/run/history.txt",
+            "app.py",
+        ]
+        assert skipped.get("default_excluded_dir", 0) == 0
+
+    def test_force_ignored_is_limited_to_requested_paths(self, tmp_path):
+        requested = tmp_path / ".gen_files" / "requested"
+        unrelated = tmp_path / ".gen_files" / "unrelated"
+        requested.mkdir(parents=True)
+        unrelated.mkdir(parents=True)
+        (requested / "include.txt").write_text("include")
+        (unrelated / "exclude.txt").write_text("exclude")
+
+        files, _ = scan_supported_files(
+            tmp_path,
+            skip_secret_files=True,
+            force_ignored_paths=[str(requested)],
+        )
+
+        assert [item.rel_path.as_posix() for item in files] == [".gen_files/requested/include.txt"]
+
+    def test_force_ignored_does_not_bypass_secret_safety(self, tmp_path):
+        generated = tmp_path / ".gen_files" / "requested"
+        generated.mkdir(parents=True)
+        (generated / ".env").write_text("TOKEN=secret")
+        (generated / "safe.txt").write_text("safe")
+
+        files, skipped = scan_supported_files(
+            tmp_path,
+            skip_secret_files=True,
+            force_ignored_paths=[str(generated)],
+        )
+
+        assert [item.rel_path.as_posix() for item in files] == [".gen_files/requested/safe.txt"]
+        assert sum(skipped.values()) == 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def test_expand_explicit_path_inputs_splits_quoted_existing_directories(tmp_path):
+    from build_ai_context.scanner import expand_explicit_path_inputs
+
+    first = tmp_path / "ignored output one"
+    second = tmp_path / "ignored-output-two"
+    first.mkdir()
+    second.mkdir()
+
+    assert expand_explicit_path_inputs([f"{first} {second}"], tmp_path) == [
+        str(first),
+        str(second),
+    ]
+
+
+class TestFinalSetExclusions:
+    def test_excludes_folder_and_normalized_formats(self, sample_files):
+        root, files = sample_files
+        kept, paths, formats = exclude_files(files, root, ["docs"], ["py", "*.PY", ".py"])
+        assert [item.rel_path.as_posix() for item in kept] == ["README.md"]
+        assert paths == ["docs/guide.md/index.md"]
+        assert formats == [".py"]
+
+    def test_exclusions_only_apply_to_supplied_final_set(self, sample_files):
+        root, files = sample_files
+        selected = [item for item in files if item.rel_path.as_posix().startswith("src/")]
+        kept, paths, formats = exclude_files(selected, root, ["README.md"], [".md"])
+        assert [item.rel_path.as_posix() for item in kept] == [
+            "src/main.py",
+            "src/utils.py",
+        ]
+        assert paths == ["README.md"]
+        assert formats == [".md"]
+
+
+def test_scan_supports_log_and_jsonl_files(tmp_path):
+    (tmp_path / "app.log").write_text("startup complete\n")
+    (tmp_path / "events.jsonl").write_text('{"event":"startup"}\n')
+
+    files, skipped = scan_supported_files(tmp_path, skip_secret_files=True)
+
+    assert [(item.rel_path.as_posix(), item.category) for item in files] == [
+        ("app.log", "config_docs"),
+        ("events.jsonl", "config_docs"),
+    ]
+    assert skipped == {}
+
+
+def test_gitignored_log_still_requires_force_ignored(tmp_path):
+    (tmp_path / ".gitignore").write_text("*.log\n")
+    (tmp_path / "app.log").write_text("startup complete\n")
+
+    files, _ = scan_supported_files(tmp_path, skip_secret_files=True)
+    assert files == []
+
+    forced, _ = scan_supported_files(
+        tmp_path,
+        skip_secret_files=True,
+        force_ignored_paths=["app.log"],
+    )
+    assert [item.rel_path.as_posix() for item in forced] == ["app.log"]
+
+
+def test_scan_supports_gzip_as_base64_with_original_hash(tmp_path):
+    import base64
+    import gzip
+    import hashlib
+
+    payload = b"historic changelog\nversion 1.4.0\n"
+    archive = tmp_path / "history.md.gz"
+    archive.write_bytes(gzip.compress(payload, mtime=0))
+
+    files, skipped = scan_supported_files(tmp_path, skip_secret_files=True)
+
+    assert skipped == {}
+    assert len(files) == 1
+    source = files[0]
+    assert source.encoding == "base64"
+    assert base64.b64decode("".join(source.lines)) == archive.read_bytes()
+    assert source.size_bytes == len(archive.read_bytes())
+    assert source.sha256 == hashlib.sha256(archive.read_bytes()).hexdigest()
+
+
+def test_scan_supports_pdf_as_base64_with_original_hash(tmp_path):
+    """PDF bytes are preserved as Base64 for readable text bundles."""
+    import base64
+    import hashlib
+
+    content = b"%PDF-1.7\n\x00binary-pdf-content\n%%EOF\n"
+    pdf = tmp_path / "report.pdf"
+    pdf.write_bytes(content)
+
+    files, skipped = scan_supported_files(tmp_path, skip_secret_files=True)
+
+    assert skipped.get("binary", 0) == 0
+    assert len(files) == 1
+    source = files[0]
+    assert source.rel_path == Path("report.pdf")
+    assert source.encoding == "base64"
+    assert base64.b64decode("".join(source.lines)) == content
+    assert source.size_bytes == len(content)
+    assert source.sha256 == hashlib.sha256(content).hexdigest()
+
+
+def test_force_include_formats_adds_unknown_text_and_binary_files(tmp_path):
+    """Explicit formats include unknown text and binary files without changing defaults."""
+    rust = tmp_path / "main.rs"
+    database = tmp_path / "cache.sqlite3"
+    other = tmp_path / "asset.unknown"
+    rust.write_text("fn main() {}\n")
+    database.write_bytes(b"SQLite format 3\x00\x01\x02")
+    other.write_text("ignore me\n")
+
+    files, skipped = scan_supported_files(
+        tmp_path,
+        skip_secret_files=True,
+        force_include_formats=["rs", "*.sqlite3"],
+    )
+
+    by_name = {source.rel_path.name: source for source in files}
+    assert set(by_name) == {"main.rs", "cache.sqlite3"}
+    assert by_name["main.rs"].encoding == "text"
+    assert by_name["cache.sqlite3"].encoding == "base64"
+    assert skipped["unsupported_type"] == 1
+
+
+def test_force_include_formats_does_not_bypass_ignore_or_secret_rules(tmp_path):
+    """Format overrides do not weaken path and secret protections."""
+    (tmp_path / ".gitignore").write_text("ignored.rs\n")
+    (tmp_path / "ignored.rs").write_text("fn ignored() {}\n")
+    (tmp_path / ".env.rs").write_text("TOKEN=secret\n")
+
+    files, _ = scan_supported_files(
+        tmp_path,
+        skip_secret_files=True,
+        force_include_formats=[".rs"],
+    )
+
+    assert files == []
+
+
+def test_metadata_only_scan_preserves_bytes_without_materializing_content_lines(tmp_path):
+    """Compressed scanning keeps exact bytes but avoids large decoded/Base64 line lists."""
+    import hashlib
+
+    text = tmp_path / "large.json"
+    binary = tmp_path / "cache.sqlite3"
+    text_bytes = (b'{"value": 1}\n' * 5000)
+    binary_bytes = b"SQLite format 3\x00" + bytes(range(256)) * 1000
+    text.write_bytes(text_bytes)
+    binary.write_bytes(binary_bytes)
+
+    files, _ = scan_supported_files(
+        tmp_path,
+        skip_secret_files=True,
+        force_include_formats=[".sqlite3"],
+        metadata_only=True,
+    )
+
+    by_name = {source.rel_path.name: source for source in files}
+    assert by_name["large.json"].lines == []
+    assert by_name["large.json"].line_count == 5000
+    assert by_name["large.json"].snapshot_bytes == text_bytes
+    assert by_name["cache.sqlite3"].lines == []
+    encoded_size = ((len(binary_bytes) + 2) // 3) * 4
+    assert by_name["cache.sqlite3"].line_count == (encoded_size + 75) // 76
+    assert by_name["cache.sqlite3"].sha256 == hashlib.sha256(binary_bytes).hexdigest()

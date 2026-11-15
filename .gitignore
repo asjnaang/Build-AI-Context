@@ -20,6 +20,12 @@ wheels/
 .installed.cfg
 *.egg
 .env
+native/target/
+
+
+node_modules/
+IntelliJ/
+Vscode/
 
 # Virtual environments
 .venv/
@@ -47,7 +53,6 @@ htmlcov/
 Thumbs.db
 
 # Export outputs
-exported_sources*/
 tools/
 
 .claude
@@ -55,10 +60,9 @@ claude.md
 uv.lock
 
 # Ignore filetree files (all timestamps)
-*_file_tree_*.txt
 .gapply*
 
 # Ignore code graph files (all timestamps)
-*_code_graph_*.txt
-*_code_graph_*.json
 
+# Generated files created by repository utility scripts
+.gen_files/**

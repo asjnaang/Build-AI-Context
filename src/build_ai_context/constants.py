@@ -2,11 +2,13 @@
 Constants and configuration for build_ai_context package.
 """
 
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Set
 
 # Default configuration values
 # Fixed max rendered lines per output *bundle* file. Not a CLI override.
 DEFAULT_MAX_LINES: int = 8000
+GENERATED_FILES_DIR: str = ".gen_files"
 DEFAULT_OUTPUT_DIR: str = "exported_sources"
 DEFAULT_TEXT_ENCODING: str = "utf-8"
 
@@ -14,7 +16,6 @@ DEFAULT_TEXT_ENCODING: str = "utf-8"
 # LARGE_FILE_SKIP_LINES is the default for --max-file-lines (CLI-overridable).
 LARGE_FILE_WARN_LINES: int = 1500
 LARGE_FILE_SKIP_LINES: int = 3000
-
 # Category extensions mapping
 CATEGORY_EXTENSIONS: Dict[str, Set[str]] = {
     "python": {".py"},
@@ -25,7 +26,23 @@ CATEGORY_EXTENSIONS: Dict[str, Set[str]] = {
     "web_ui": {".html", ".css", ".scss", ".sass", ".less", ".vue", ".svelte"},
     "shell": {".sh", ".bash", ".zsh"},
     "flutter": {".dart"},
-    "config_docs": {".json", ".yaml", ".yml", ".xml", ".toml", ".graphql", ".gql", ".md", ".txt", ".sql", ".csv"},
+    "config_docs": {
+        ".json",
+        ".jsonl",
+        ".yaml",
+        ".yml",
+        ".xml",
+        ".toml",
+        ".graphql",
+        ".gql",
+        ".md",
+        ".txt",
+        ".log",
+        ".sql",
+        ".csv",
+        ".gz",
+        ".pdf",
+    },
 }
 
 # Special filenames that should be included
@@ -68,6 +85,7 @@ SPECIAL_FILENAMES: Set[str] = {
 # Directories to always skip
 DEFAULT_EXCLUDED_DIRS: Set[str] = {
     ".git",
+    GENERATED_FILES_DIR,
     ".svn",
     ".hg",
     ".idea",
@@ -109,7 +127,7 @@ DEFAULT_EXCLUDED_DIRS: Set[str] = {
 
 # Directory prefixes to always skip (paths starting with these)
 DEFAULT_EXCLUDED_PREFIXES: Set[str] = {
-    "exported_sources",
+    "exported_sources",  # Legacy output location, retained for compatibility.
 }
 
 # Extra file patterns to skip (not in .gitignore but not needed for context)
@@ -218,18 +236,30 @@ INTERESTING_FILES: Set[str] = {
 }
 
 
-def generate_timestamp() -> str:
-    """Generate a timestamp string in UTC format YYYYMMDDTHHMMSSZ."""
-    from datetime import datetime, timezone
+SINGAPORE_TIMEZONE = timezone(timedelta(hours=8), "Asia/Singapore")
 
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+def local_now() -> datetime:
+    """Return the permission-free system-local time, falling back to Singapore."""
+    try:
+        current = datetime.now().astimezone()
+        if current.utcoffset() is not None:
+            return current
+    except (OSError, ValueError):
+        pass
+    return datetime.now(SINGAPORE_TIMEZONE)
+
+
+def generate_timestamp() -> str:
+    """Generate a timestamp using local wall-clock time as YYYYMMDDTHHMMSS."""
+    return local_now().strftime("%Y%m%dT%H%M%S")
 
 
 def is_timestamp(s: str) -> bool:
-    """Return True if s matches YYYYMMDDTHHMMSSZ."""
+    """Return True for current local timestamps and legacy UTC timestamps."""
     import re
 
-    return bool(re.fullmatch(r"\d{4}\d{2}\d{2}T\d{2}\d{2}\d{2}Z", s))
+    return bool(re.fullmatch(r"\d{8}T\d{6}(?:Z|[+-]\d{4})?", s))
 
 
 def extract_timestamp_from_dir_name(dir_name: str) -> str:

@@ -1,6 +1,6 @@
 # build-ai-context
 
-Export source code and project files into AI-friendly text bundles with a compact manifest. Perfect for feeding your codebase to AI assistants like Claude, GPT-4, Copilot, or any LLM.
+Export selected source and project files as readable text bundles or a Base64-encoded compressed text payload with a compact manifest and agent prompt. Perfect for feeding your codebase to AI assistants like Claude, GPT-4, Copilot, or any LLM.
 
 **Commands:** `build-ai-context` or `baic` (short alias)
 
@@ -31,6 +31,9 @@ baic
 
 # Non-interactive - export everything supported
 baic . --all
+
+# Export normal project files plus explicitly requested ignored/generated paths
+baic . --all --force-ignored --paths outputs/knowledge outputs/latest-run
 
 # Non-interactive - export specific categories
 baic . --non-interactive --categories python typescript
@@ -78,6 +81,11 @@ baic . --non-interactive --paths "main.py utils.py, helpers.py"
 
 The tool intelligently parses paths even if you mix commas and spaces or omit separators.
 
+When `--all` and `--paths` are combined, `--all` selects every normally discoverable supported file and
+`--paths` supplies additional explicit locations. Ignored/default-excluded content is added only when
+`--force-ignored` is also present, and that bypass is restricted to the supplied paths. Unrelated ignored
+content remains excluded. `--exclude-paths` and `--exclude-formats` still remove files from the final set.
+
 ### 4) mixed - Categories + Paths + Name Filters
 Combine categories, paths, and filename filters:
 
@@ -110,16 +118,42 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `--graph` | Generate code graph only (catalog + imports), exit | `baic --graph .` |
 | `--format` | Graph file format: `txt` (default) or `json` | `--graph --format json` |
 | `--categories` | Export by category | `--categories python typescript` |
+| `--all` | Export all normally discoverable files; explicit `--paths` remain additive | `--all --force-ignored --paths outputs/run` |
 | `--paths` | Export by path/filename | `--paths src tests` |
 | `--keywords` | Search in code content | `--keywords TODO FIXME` |
+| `--exclude-paths` | Remove files/folders from the final selected set | `--exclude-paths tests fixtures` |
+| `--exclude-formats` | Remove file extensions from the final selected set | `--exclude-formats .json *.md` |
+| `--task` | Replace the generated prompt's Task Contract placeholder | `--task "Fix the reported issue"` |
+| `--task-clipboard`, `--tc` | Read the Task Contract from the macOS clipboard | `--tc` |
 | `--non-interactive` | Run without prompts | `--non-interactive` |
 | `--all` | Export everything supported without prompts | `baic . --all` |
 | `--max-file-lines` | Skip repo source files with ≥ N lines when bundling (default: 3000; `0` = no limit). Bundle output size stays fixed at 8000 lines. | `--max-file-lines 10000` |
+| `--force-ignored` | Include supported files under explicit `--paths` even when ignored; secret-like files still require `--include-secret-files` | `--paths .gen_files/reports --force-ignored` |
+| `--force-include-formats` | Include otherwise unsupported extensions in `tar-gz` transport; accepts `rs`, `.rs`, or `*.rs` | `--force-include-formats .rs .sqlite3` |
+| `--force-bundle` | Bundle selected files regardless of the per-file line limit; oversized JSON is sampled when possible | `--paths reports --force-bundle` |
+| `--transport` | `tar-gz` (default) or readable `text` bundles | `--transport text` |
+| `--split` | Split `tar-gz` transport into deterministic payloads capped at 18 MiB each | `--split` |
+| `--binary-policy` | `include` (default), `skip`, or `compressed-only` | `--binary-policy compressed-only` |
 | `--output-dir` | Custom output folder | `--output-dir ./my-bundles` |
 | `--project-overview` | Generate architecture overview | `--project-overview` |
 | `--include-secret-files` | Include .env, keys, etc. (careful!) | `--include-secret-files` |
 | `--redact` | Redact secrets from output | `--redact` |
 | `--version` | Show version | `--version` |
+
+### Including project-specific formats
+
+Use `--force-include-formats` when a project contains extensions that are not in the built-in
+category registry and the output uses the default `tar-gz` transport:
+
+```bash
+baic . --all --force-include-formats .rs .sqlite3
+```
+
+The override is intentionally rejected with `--transport text`. Compressed transport preserves
+the original bytes, while readable text bundles would need a stable text or binary representation
+policy. Existing ignore rules, secret-file protection, and explicit exclusions still apply. A forced
+binary file is detected and represented internally as Base64, then archived from its original byte
+snapshot.
 
 ## Categories Supported
 
@@ -133,7 +167,10 @@ In interactive mode, you'll see a checkbox UI with all matching files pre-select
 | `web_ui` | `.html`, `.css`, `.scss`, `.vue`, `.svelte` |
 | `shell` | `.sh`, `.bash`, `.zsh` |
 | `flutter` | `.dart` |
-| `config_docs` | `.json`, `.yaml`, `.toml`, `.md`, `.sql`, `.csv` |
+| `config_docs` | `.json`, `.jsonl`, `.yaml`, `.toml`, `.md`, `.txt`, `.log`, `.sql`, `.csv` |
+
+`.log` and `.jsonl` files are supported as config/docs. Files ignored by `.gitignore` remain
+excluded by default; include a specific ignored path with `--paths <path> --force-ignored`.
 
 ### Category Aliases
 
@@ -141,61 +178,44 @@ Shortcuts you can use: `py`→`python`, `ts`→`typescript`, `js`→`javascript`
 
 ## Output Files
 
-After running, you'll get:
+The default `tar-gz` transport keeps the generated package within the three-attachment workflow: one payload text file, one manifest, and one `baic_prompt.md`. The optional `text` transport preserves the readable framed-bundle behavior: BAIC writes readable, framed
+`*_bundle_*.txt` files capped at 8000 rendered lines, one manifest JSON, and the single `baic_prompt.md`.
 
-| File | Description |
-|------|-------------|
-| `<project>_bundle_001_<timestamp>.txt`, ... | Text bundles with consistent timestamps |
-| `<project>_manifest_<timestamp>.json` | Maps every file to its bundle and line numbers |
-| `<project>_readme_<timestamp>.txt` | Quick summary of what was exported |
-| `<project>_file_tree_<timestamp>.txt` | Path list (line + comma separated) and type counts |
-| `<project>_code_graph_<timestamp>.txt` | (with `--graph`) Symbol catalog + import edges |
-| `PROJECT_OVERVIEW.txt` | (with `--project-overview`) Architecture overview |
+Use `--transport tar-gz` when attachment count matters. BAIC deterministically TARs and Gzip-compresses the
+selected exact source bytes, Base64-encodes the archive, and writes one `*_payload_*.txt` attachment instead of
+a binary archive. The output is one payload text file, one manifest JSON, and the single `baic_prompt.md`. The
+manifest validates the payload, Base64 body, decoded archive, and every source entry.
 
-### Bundle Format
+Examples:
 
-Each file in a bundle includes a header that AI assistants can use to locate code:
+```bash
+# Existing commands remain readable text bundles.
+baic . --all
+baic . --non-interactive --paths src tests
 
-```
-# ===== BEGIN FILE: src/utils/auth.py =====
-# category : python
-# chunk : 1/1
-# line_range : 1-50
-# total_lines : 50
-# ===== CONTENT =====
-def authenticate(user):
-    ...
-# ===== END FILE: src/utils/auth.py (chunk 1/1) =====
+# One compressed text payload for agents that reject binary archive attachments.
+baic . --all --transport tar-gz
 ```
 
-### MANIFEST.json Structure
+Redaction remains available with the optional `text` transport; `--redact` cannot be combined with `--transport tar-gz` because compressed transport preserves exact selected bytes. `tar-gz` is an internal archive representation;
+no `.tar.gz`, `.gz`, or `.zip` attachment remains in the generated output directory.
 
-```json
-{
-  "tool": "build-ai-context",
-  "selected_files": ["src/main.py", "src/utils.py"],
-  "selection": {
-    "selection_mode": "category",
-    "selected_categories": ["python"],
-    "selected_paths": []
-  },
-  "bundles": [
-    {
-      "bundle": "bundle_001.txt",
-      "files": [
-        {
-          "path": "src/main.py",
-          "category": "python",
-          "file_start_line": 1,
-          "file_end_line": 50,
-          "bundle_start_line": 10,
-          "bundle_end_line": 59
-        }
-      ]
-    }
-  ]
-}
-```
+PDF files are binary. With `--transport text`, BAIC wraps their original bytes as Base64 in the readable
+bundle, just as it does for `.gz` files; the manifest records `encoding: base64`, the original byte size,
+and the original SHA-256. With `--transport tar-gz`, the PDF is stored byte-for-byte in the internal TAR
+before the payload is Gzip-compressed and Base64-encoded. PDFs larger than 15 MiB are called out in the
+manifest warnings and in the completion output. Because most PDFs already compress their streams, Gzip may
+not reduce their size significantly.
+
+Use `--binary-policy include` to retain supported binary files in either transport, `skip` to omit them, or
+`compressed-only` to omit them from readable text bundles while retaining them with `--transport tar-gz`.
+BAIC never silently changes transport. The manifest records selected files, transported files, policy omissions,
+and their counts separately so downstream agents can distinguish user selection from delivered source.
+
+Format behavior is defined centrally in `src/build_ai_context/formats.py`. Add future binary formats there instead
+of duplicating scanner, line-limit, redaction, transport, and warning conditions across modules. Export planning is
+transport-neutral; renderers consume an explicit plan rather than inferring compressed archive membership from
+text-bundle chunks.
 
 ## Filetree Feature
 
@@ -292,14 +312,30 @@ Redaction targets: API keys, tokens, passwords, JWTs, AWS keys, GitHub tokens, e
 ### Automatically Skipped (No config needed)
 
 - **Directories**: `.git`, `node_modules`, `__pycache__`, `.gradle`, `build`, `dist`, `target`, `.github`
-- **Exported bundles**: `exported_sources*` folders (prevents re-bundling previous exports)
+- **Generated outputs**: `.gen_files` folders, plus legacy `exported_sources*` folders for backward compatibility
 - **Lock files**: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`
 - **System files**: `.DS_Store`, `thumbs.db`, `*.swp`
 
 ### Large Files
 
+Line thresholds apply only to textual source formats. Base64 is a transport representation, so binary formats are
+controlled by `--binary-policy` and byte-size warnings rather than by encoded line count.
+
 - **>= 1500 lines**: Exported and reported under manifest `warnings`
 - **>= 3000 lines**: Excluded by default; interactive mode lets you select files to include anyway
+
+Use `--force-bundle` to disable the per-file line limit for selected files. For oversized JSON, the exporter samples the document when retaining its
+schema and representative values is more useful than skipping them. The exporter
+retains up to five representatives per structural shape, reducing to a minimum of
+three when necessary. Sampling is in memory and never rewrites source files.
+
+```bash
+baic . --non-interactive --paths data --force-bundle
+
+# Include an explicitly requested generated/ignored directory
+baic . --non-interactive --paths .gen_files/git_commit_exports/run \
+    --force-ignored --force-bundle
+```
 
 ### Secrets (Skipped by default, include with `--include-secret-files`)
 
@@ -332,6 +368,49 @@ baic . --non-interactive --keywords TODO
 baic . --non-interactive --paths src/components src/utils
 ```
 
+### Exclude paths or file formats from a selection
+
+Exclusions run after categories, paths, or keyword selection and immediately before bundling.
+They do not change the project-wide filetree, which still describes all scanned supported files.
+
+```bash
+# Include src and tests, then remove fixtures and all JSON/Markdown files
+baic . --non-interactive --paths src tests \
+    --exclude-paths tests/fixtures \
+    --exclude-formats .json md
+```
+
+`--exclude-paths` accepts the same relative paths, absolute paths, filenames, folders, commas,
+and multiline input as `--paths`. `--exclude-formats` accepts `json`, `.json`, or `*.json`.
+
+### Include the task in the generated AI prompt
+
+```bash
+baic . --non-interactive --paths src/components src/utils \
+    --task "Review these files and fix the issues we discussed."
+```
+
+The task replaces the placeholder under `## Task` in the transport-specific source template. Both transports
+still generate the same attachment name, `baic_prompt.md`: `tar-gz` uses `baic_prompt_gzip.md`, while `text`
+uses `baic_prompt_text.md`. This preserves transport-correct extraction instructions without increasing the
+number of generated attachments. Omit `--task` to keep the placeholder.
+
+For long multiline tasks, JSON, quotes, or other shell-sensitive content, copy the
+complete task and use `--tc` (or `--task-clipboard`). The CLI reads the clipboard
+internally, so the content is not parsed by the shell:
+
+```bash
+baic . --non-interactive --paths src/components src/utils --tc
+```
+
+Simple aliases are sufficient:
+
+```zsh
+alias baicp='baic . --non-interactive --paths'
+alias baick='baic . --non-interactive --keywords'
+alias baica='baic . --all'
+```
+
 ### Full export with overview
 
 ```bash
@@ -356,9 +435,9 @@ baic
 ## Using with AI Assistants
 
 1. **Run the exporter**: `baic . --categories python`
-2. **Upload bundles**: Attach `bundle_001.txt`, `bundle_002.txt`, etc.
-3. **Upload manifest**: Attach `MANIFEST.json` so AI understands file mappings
-4. **Ask away**: The AI can now reference exact file paths and line numbers
+2. **Upload the generated text**: Attach readable bundle files, or the single payload text file produced by `--transport tar-gz`.
+3. **Upload the manifest and prompt**: Attach the manifest and the generated `baic_prompt.md`.
+4. **Ask away**: The AI validates and extracts exact repository files before working.
 
 Example prompt to AI:
 > "I've uploaded my Python project. Using the MANIFEST.json, find the authentication logic in src/auth.py and help me add password reset functionality."
@@ -369,6 +448,9 @@ Example prompt to AI:
 usage: build-ai-context [-h] [--max-file-lines N] [--output-dir OUTPUT_DIR]
                        [--non-interactive] [--categories [CATEGORIES ...]]
                        [--paths [PATHS ...]] [--keywords [KEYWORDS ...]]
+                       [--exclude-paths [EXCLUDE_PATHS ...]]
+                       [--exclude-formats [EXCLUDE_FORMATS ...]]
+                       [--task TASK | --task-clipboard] [--force-ignored] [--force-bundle]
                        [--include-secret-files] [--project-overview]
                        [--tree] [--graph] [--format {txt,json}] [--redact] [--version]
                        [project_root]
@@ -386,11 +468,17 @@ options:
   --max-file-lines N    Skip repo source files with >= N lines (default: 3000;
                         0 disables the per-file limit). Output bundles are
                         always packed to 8000 lines max.
+  --force-ignored       Include ignored files under explicit --paths
+  --force-bundle        Bundle selected files without the per-file line limit
   --output-dir DIR      Custom output directory
   --non-interactive     Run without prompts
   --categories CATS     Categories to export
   --paths PATHS         Files/folders to export
   --keywords KEYWORDS   Keywords to search in file content
+  --exclude-paths PATHS Remove files/folders from the final selected set
+  --exclude-formats EXT Remove extensions from the final selected set
+  --task TASK            Replace the Task placeholder in the transport-specific prompt
+  --task-clipboard, --tc Read the Task Contract from the macOS clipboard
   --include-secret-files Include secret-like files
   --project-overview    Generate PROJECT_OVERVIEW.txt
 ```
@@ -402,3 +490,65 @@ Contributions welcome! Please feel free to submit a Pull Request.
 ## License
 
 MIT License - see LICENSE file for details.
+
+
+### Large files with compressed split transport
+
+With `--transport tar-gz --split`, a single PDF, SQLite database, or existing compressed file may exceed the payload limit. Such files are divided into deterministic transport members, recorded in `transport.reassembly`, and restored byte-for-byte by the generated extractor. Each payload remains an independently validated tar+gzip+base64 document.
+
+### How compressed split transport is packed
+
+With `--transport tar-gz --split`, BAIC limits each complete text payload to **19,900,000 bytes**. The limit
+includes the payload header, wrapped Base64 body, and line breaks, not only the gzip archive.
+
+Each logical TAR file member is compressed once as an independent deterministic gzip member. RFC 1952 permits
+concatenated gzip members, so standard gzip readers decode the concatenation into one ordinary TAR byte stream.
+This gives the planner an exact additive compressed size for every file or oversized-file part before grouping.
+The planner then:
+
+1. applies best-fit decreasing bin packing using those exact compressed sizes;
+2. runs a bounded exact search over the least-filled three-to-five payloads to eliminate a locally avoidable bin;
+3. appends the compressed TAR end marker and validates the final Base64 text payload against 19,900,000 bytes.
+
+The bounded search is intentionally local and capped at 250,000 states. It fixes patterns where three partially
+filled payloads can be redistributed into two without restoring the previous repeated whole-archive compression
+cost. Every payload except the unavoidable final residual is filled as closely as indivisible member sizes allow.
+Oversized source files remain represented by deterministic `.baic-file-parts/` members and are reassembled from
+`transport.reassembly` after extraction and SHA-256 validation.
+
+### Restore a compressed export
+
+A `tar-gz` export can be rebuilt byte-for-byte from its generated manifest and payload files. The restore source
+and destination both have useful defaults:
+
+- `baic --restore` reads the export from the current directory.
+- The default destination is `PROJECT_NAME` under the current working directory, derived from the manifest's
+  `project_root`.
+- Passing an export directory or exact manifest changes only the source. It does not make that directory the
+  destination.
+
+From inside an export directory:
+
+```bash
+baic --restore
+```
+
+From its parent or any other directory:
+
+```bash
+baic --restore ./exported_sources_my-project_20261112T120000
+```
+
+Both commands create `./my-project` unless `--restore-output` is supplied:
+
+```bash
+baic --restore ./exported_sources_my-project_20261112T120000 \
+  --restore-output ./rebuilt-project
+```
+
+An existing destination is rejected. Use `--restore-force` with `--restore` only when that complete destination
+should be replaced. BAIC never restores over or deletes the export source directory.
+
+Restore validates the manifest, every payload and Base64 body, decoded archives, safe paths, entry hashes, and
+split-file reassembly before atomically publishing the rebuilt files. Readable `text` bundles are not accepted
+because they may be redacted and do not preserve every selected source byte.

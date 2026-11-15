@@ -1,5 +1,6 @@
 """Tests for oversized-file UX and non-interactive all-file exports."""
 import json
+import pytest
 from pathlib import Path
 
 from build_ai_context.cli import build_parser, run_exporter
@@ -26,6 +27,7 @@ def _source(tmp_path: Path, name: str, line_count: int) -> SourceFile:
 def test_all_flag_enables_non_interactive_export():
     args = build_parser().parse_args(["--all"])
     assert args.non_interactive is True
+    assert args.select_all is True
     assert args.categories == []
     assert args.paths == []
     assert args.keywords == []
@@ -74,7 +76,7 @@ def test_manifest_separates_included_warnings_from_actual_skips(tmp_path):
     skipped_file.write_text("\n".join(f"line_{index}" for index in range(3001)))
     output = tmp_path / "output"
     args = build_parser().parse_args(
-        [str(project), "--all", "--output-dir", str(output)]
+        [str(project), "--transport", "text", "--all", "--output-dir", str(output)]
     )
 
     result, _, _ = run_exporter(args, None)
@@ -99,7 +101,7 @@ def test_interactive_export_can_force_include_oversized_file(tmp_path, monkeypat
     oversized.write_text("\n".join(f"line_{index}" for index in range(3001)))
     output = tmp_path / "output"
     args = build_parser().parse_args(
-        [str(project), "--output-dir", str(output)]
+        [str(project), "--transport", "text", "--output-dir", str(output)]
     )
 
     def select_all(_exporter, files, _root):
@@ -128,3 +130,549 @@ def test_interactive_export_can_force_include_oversized_file(tmp_path, monkeypat
     assert manifest["warnings"][0]["path"] == "oversized.py"
     bundle_text = "".join(path.read_text() for path in output.glob("*_bundle_*.txt"))
     assert "===== BEGIN FILE: oversized.py =====" in bundle_text
+
+
+def test_task_flag_replaces_generated_prompt_placeholder(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("print('hello')\n")
+    output = tmp_path / "output"
+    task = "Go through these files and fix the issues we discussed before."
+    args = build_parser().parse_args(
+        [str(project), "--transport", "text", "--all", "--output-dir", str(output), "--task", task]
+    )
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    prompt = (output / "baic_prompt.md").read_text()
+    assert task in prompt
+    assert "[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]" not in prompt
+    assert f"```text\n{task}\n```" in prompt
+
+
+def test_generated_prompt_keeps_placeholder_without_task(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("print('hello')\n")
+    output = tmp_path / "output"
+    args = build_parser().parse_args(
+        [str(project), "--transport", "text", "--all", "--output-dir", str(output)]
+    )
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    prompt = (output / "baic_prompt.md").read_text()
+    assert "[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]" in prompt
+
+
+
+def test_task_clipboard_alias_reads_pbpaste_and_updates_prompt(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("print('hello')\n")
+    output = tmp_path / "output"
+    task = """Review this JSON:
+{"_meta": {"updated_by_display_name": "Example User (TS)"}}
+Do not reinterpret $HOME, *.json, or `commands`.
+"""
+    args = build_parser().parse_args(
+        [str(project), "--transport", "text", "--all", "--output-dir", str(output), "--tc"]
+    )
+    completed = __import__("subprocess").CompletedProcess(["pbpaste"], 0, task, "")
+    monkeypatch.setattr("build_ai_context.cli.subprocess.run", lambda *args, **kwargs: completed)
+    result, _, _ = run_exporter(args, None)
+    assert result == 0
+    assert task in (output / "baic_prompt.md").read_text()
+
+
+def test_task_clipboard_long_option_is_supported():
+    args = build_parser().parse_args(["--task-clipboard"])
+    assert args.task_clipboard is True
+
+
+def test_task_and_clipboard_are_mutually_exclusive():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--task", "one", "--tc"])
+
+
+def test_task_clipboard_rejects_empty_clipboard(monkeypatch):
+    from build_ai_context.cli import resolve_task_content
+    args = build_parser().parse_args(["--tc"])
+    completed = __import__("subprocess").CompletedProcess(["pbpaste"], 0, "", "")
+    monkeypatch.setattr("build_ai_context.cli.subprocess.run", lambda *args, **kwargs: completed)
+    with pytest.raises(ValueError, match="does not contain task text"):
+        resolve_task_content(args)
+
+
+def test_task_clipboard_reports_missing_pbpaste(monkeypatch):
+    from build_ai_context.cli import resolve_task_content
+    args = build_parser().parse_args(["--tc"])
+
+    def missing_pbpaste(*args, **kwargs):
+        raise FileNotFoundError
+
+    monkeypatch.setattr("build_ai_context.cli.subprocess.run", missing_pbpaste)
+    with pytest.raises(ValueError, match="requires the macOS pbpaste command"):
+        resolve_task_content(args)
+
+
+
+def test_multiple_comma_terminated_path_arguments_are_normalized(tmp_path):
+    project = tmp_path / "project"
+    first = project / "src" / "service.py"
+    second = project / "src" / "materialization.py"
+    third = project / "tests" / "test_service.py"
+    for path in (first, second, third):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {path.name}\n")
+    output = tmp_path / "output"
+    args = build_parser().parse_args(
+        [
+            str(project),
+            "--transport", "text",
+            "--non-interactive",
+            "--output-dir",
+            str(output),
+            "--paths",
+            "src/service.py,",
+            "src/materialization.py,",
+            "tests/test_service.py",
+            "--task",
+            "Review all selected files.",
+        ]
+    )
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    assert manifest["selected_files"] == [
+        "src/materialization.py",
+        "src/service.py",
+        "tests/test_service.py",
+    ]
+    assert manifest["selection"]["missing_paths"] == []
+
+
+def test_line_comma_and_mixed_path_input_select_the_same_files(tmp_path):
+    project = tmp_path / "project"
+    requested = ["src/one.py", "src/two.py", "tests/test_one.py"]
+    for relative_path in requested:
+        path = project / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {path.name}\n")
+
+    variants = [
+        "\n".join(requested),
+        ",".join(requested),
+        ",\n".join(requested),
+    ]
+    for index, path_input in enumerate(variants):
+        output = tmp_path / f"output-{index}"
+        args = build_parser().parse_args(
+            [
+                str(project),
+                "--non-interactive",
+                "--output-dir",
+                str(output),
+                "--paths",
+                path_input,
+            ]
+        )
+
+        result, _, _ = run_exporter(args, None)
+
+        assert result == 0
+        manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+        assert manifest["selected_files"] == sorted(requested)
+        assert manifest["selection"]["missing_paths"] == []
+
+
+
+def test_force_bundle_defaults_to_false():
+    args = build_parser().parse_args([])
+    assert args.force_bundle is False
+    assert args.force_ignored is False
+
+
+def test_force_bundle_samples_json_without_modifying_source(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    source = project / "catalog.json"
+    original = json.dumps({
+        "_meta": {"version": 7},
+        **{f"page-{i}": {"state": str(i), "aa_data": {"kind": "page"}} for i in range(30)},
+        **{f"click-{i}": {"aa_data": {"kind": "click", "name": str(i)}} for i in range(30)},
+        **{f"error-{i}": {"aa_data": {"error": str(i)}} for i in range(30)},
+    }, indent=2)
+    source.write_text(original)
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project), "--transport", "text", "--all", "--output-dir", str(output),
+        "--max-file-lines", "100", "--force-bundle",
+    ])
+    result, _, _ = run_exporter(args, None)
+    assert result == 0
+    assert source.read_text() == original
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    sample = next(item for item in manifest["warnings"]
+                  if item["reason"] == "force_bundled_json_sample")
+    assert sample["bundled_line_count"] < 100
+    assert sample["representatives_per_shape"] >= 3
+    bundle = next(output.glob("*_bundle_*.txt")).read_text()
+    assert "===== BEGIN FILE: catalog.json =====" in bundle
+    assert '"_meta"' in bundle
+
+
+def test_force_bundle_preserves_array_shapes(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    source = project / "values.json"
+    source.write_text(json.dumps({"items": [
+        *({"kind": "object", "value": i} for i in range(25)),
+        *(f"scalar-{i}" for i in range(25)),
+    ]}, indent=2))
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project), "--transport", "text", "--all", "--output-dir", str(output),
+        "--max-file-lines", "50", "--force-bundle",
+    ])
+    result, _, _ = run_exporter(args, None)
+    assert result == 0
+    bundle = next(output.glob("*_bundle_*.txt")).read_text()
+    assert '"kind": "object"' in bundle
+    assert '"scalar-0"' in bundle
+
+
+def test_force_bundle_includes_invalid_json_without_line_limit(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "invalid.json").write_text("{\n" + "not-json\n" * 20 + "}")
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project), "--transport", "text", "--all", "--output-dir", str(output),
+        "--max-file-lines", "10", "--force-bundle",
+    ])
+    result, _, _ = run_exporter(args, None)
+    assert result == 0
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    assert manifest["skipped_during_pack"] == []
+    assert any(item["reason"] == "force_bundle_invalid_json"
+               for item in manifest["warnings"])
+    bundle = next(output.glob("*_bundle_*.txt")).read_text()
+    assert "===== BEGIN FILE: invalid.json =====" in bundle
+
+
+def test_force_bundle_includes_oversized_non_json_without_max_lines_override(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    source = project / "history.txt"
+    source.write_text("\n".join(f"line_{index}" for index in range(3500)))
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project), "--transport", "text", "--all", "--output-dir", str(output), "--force-bundle",
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    assert manifest["skipped_during_pack"] == []
+    assert manifest["selected_files"] == ["history.txt"]
+    bundle_text = "".join(path.read_text() for path in output.glob("*_bundle_*.txt"))
+    assert "===== BEGIN FILE: history.txt =====" in bundle_text
+
+
+def test_force_ignored_cli_exports_explicit_generated_path(tmp_path):
+    project = tmp_path / "project"
+    generated = project / ".gen_files" / "git_commit_exports" / "run"
+    generated.mkdir(parents=True)
+    (generated / "history.txt").write_text("commit history\n")
+    (project / ".gitignore").write_text(".gen_files/**\n")
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project),
+        "--non-interactive",
+        "--paths",
+        str(generated),
+        "--force-ignored",
+        "--force-bundle",
+        "--output-dir",
+        str(output),
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    assert manifest["selected_files"] == [
+        ".gen_files/git_commit_exports/run/history.txt"
+    ]
+    assert manifest["skipped_during_pack"] == []
+
+
+def test_force_ignored_cli_exports_multiple_ignored_directories_from_one_quoted_value(tmp_path):
+    project = tmp_path / "project"
+    first = project / "ignored output one"
+    second = project / "ignored-output-two"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+    (first / "first.txt").write_text("first\n")
+    (second / "second.txt").write_text("second\n")
+    (project / ".gitignore").write_text("ignored output one/\nignored-output-two/\n")
+    output = tmp_path / "output"
+
+    args = build_parser().parse_args([
+        str(project),
+        "--non-interactive",
+        "--paths",
+        f"{first} {second}",
+        "--force-ignored",
+        "--output-dir",
+        str(output),
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    assert manifest["selected_files"] == [
+        "ignored output one/first.txt",
+        "ignored-output-two/second.txt",
+    ]
+    assert manifest["selection"]["missing_paths"] == []
+
+
+def test_cli_exclusions_apply_after_path_selection_and_are_recorded(tmp_path):
+    project = tmp_path / "project"
+    for relative_path in (
+        "src/main.py",
+        "src/generated/schema.py",
+        "src/config.json",
+        "tests/test_main.py",
+    ):
+        path = project / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {path.name}\n")
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project), "--transport", "text", "--non-interactive", "--paths", "src", "tests",
+        "--exclude-paths", "src/generated", "--exclude-formats", "json",
+        "--output-dir", str(output),
+    ])
+    result, _, _ = run_exporter(args, None)
+    assert result == 0
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    assert manifest["selected_files"] == ["src/main.py", "tests/test_main.py"]
+    assert manifest["selection"]["excluded_paths"] == ["src/generated/schema.py"]
+    assert manifest["selection"]["excluded_formats"] == [".json"]
+    bundle = "".join(path.read_text() for path in output.glob("*_bundle_*.txt"))
+    assert "===== BEGIN FILE: src/main.py =====" in bundle
+    assert "===== BEGIN FILE: tests/test_main.py =====" in bundle
+    assert "===== BEGIN FILE: src/generated/schema.py =====" not in bundle
+    assert "===== BEGIN FILE: src/config.json =====" not in bundle
+
+
+def test_cli_exclusions_can_remove_every_selected_file(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "only.py").write_text("print('hello')\n")
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project), "--transport", "text", "--all", "--exclude-formats", "py", "--output-dir", str(output)
+    ])
+    result, _, _ = run_exporter(args, None)
+    assert result == 0
+    assert not output.exists()
+
+
+def test_transport_defaults_to_tar_gz_and_supports_text():
+    assert build_parser().parse_args([]).transport == "tar-gz"
+    assert build_parser().parse_args(["--transport", "text"]).transport == "text"
+
+
+def test_tar_gz_task_uses_gzip_prompt_name(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("print('hello')\n")
+    output = tmp_path / "output"
+    task = "Inspect the compressed package."
+    args = build_parser().parse_args([
+        str(project), "--transport", "tar-gz", "--all",
+        "--output-dir", str(output), "--task", task,
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    assert task in (output / "baic_prompt.md").read_text()
+
+
+def test_force_include_formats_requires_tar_gz(tmp_path, capsys):
+    """Readable text transport rejects unknown-format overrides."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "main.rs").write_text("fn main() {}\n")
+    args = build_parser().parse_args([
+        str(project),
+        "--transport",
+        "text",
+        "--all",
+        "--force-include-formats",
+        ".rs",
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 1
+    assert "requires --transport tar-gz" in capsys.readouterr().err
+
+
+def test_force_include_formats_exports_original_bytes_in_tar_gz(tmp_path):
+    """Unknown binary formats are preserved exactly in compressed transport."""
+    import base64
+    import io
+    import json
+    import tarfile
+
+    project = tmp_path / "project"
+    project.mkdir()
+    content = b"SQLite format 3\x00\x01\x02"
+    (project / "cache.sqlite3").write_bytes(content)
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project),
+        "--transport",
+        "tar-gz",
+        "--all",
+        "--force-include-formats",
+        "sqlite3",
+        "--output-dir",
+        str(output),
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    manifest_path = next(output.glob("*_manifest_*.json"))
+    manifest = json.loads(manifest_path.read_text())
+    payload = output / manifest["transport"]["payload"]
+    _, body = payload.read_bytes().split(b"\n\n", 1)
+    archive_bytes = base64.b64decode(b"".join(body.split()), validate=True)
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
+        extracted = archive.extractfile("cache.sqlite3")
+        assert extracted is not None
+        assert extracted.read() == content
+    entry = next(item for item in manifest["archive_entries"] if item["path"] == "cache.sqlite3")
+    assert entry["content_kind"] == "binary"
+
+
+def test_exclude_formats_precedes_force_include_and_final_bundling(tmp_path):
+    """An excluded format never enters discovery or the compressed archive."""
+    import base64
+    import io
+    import json
+    import tarfile
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "page.html").write_text("<html>excluded</html>\n")
+    sqlite = project / "knowledge.sqlite3"
+    sqlite.write_bytes(b"SQLite format 3\x00\x01")
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project),
+        "--transport",
+        "tar-gz",
+        "--all",
+        "--force-include-formats",
+        ".sqlite3",
+        "--exclude-formats",
+        ".html",
+        "--output-dir",
+        str(output),
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    manifest_path = next(output.glob("*_manifest_*.json"))
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["selected_files"] == ["knowledge.sqlite3"]
+    assert manifest["selection"]["excluded_formats"] == [".html"]
+    assert manifest["summary"]["skipped_counts"]["excluded_format"] == 1
+    payload = output / manifest["transport"]["payload"]
+    _, body = payload.read_bytes().split(b"\n\n", 1)
+    archive_bytes = base64.b64decode(b"".join(body.split()), validate=True)
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
+        assert archive.getnames() == ["knowledge.sqlite3"]
+
+
+def test_all_with_paths_adds_only_explicit_ignored_content(tmp_path):
+    """--all keeps normal root files and force-includes only requested ignored paths."""
+    project = tmp_path / "project"
+    requested = project / "outputs" / "requested"
+    unrelated = project / "outputs" / "unrelated"
+    requested.mkdir(parents=True)
+    unrelated.mkdir(parents=True)
+    (project / ".gitignore").write_text("outputs/\n")
+    (project / "app.py").write_text("print('app')\n")
+    (project / "README.md").write_text("# Project\n")
+    (requested / "run.log").write_text("requested\n")
+    sqlite = requested / "knowledge.sqlite3"
+    sqlite.write_bytes(b"SQLite format 3\x00\x01")
+    (unrelated / "private.log").write_text("unrelated\n")
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project),
+        "--all",
+        "--force-ignored",
+        "--force-include-formats",
+        ".sqlite3",
+        "--paths",
+        str(requested),
+        "--output-dir",
+        str(output),
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    assert manifest["selected_files"] == [
+        "README.md",
+        "app.py",
+        "outputs/requested/knowledge.sqlite3",
+        "outputs/requested/run.log",
+    ]
+    assert "outputs/unrelated/private.log" not in manifest["selected_files"]
+    assert manifest["selection"]["selection_mode"] == "all"
+    assert manifest["selection"]["selected_paths"] == ["outputs/requested"]
+
+
+def test_all_with_paths_does_not_bypass_gitignore_without_force_ignored(tmp_path):
+    """--paths stay additive metadata unless --force-ignored explicitly authorizes bypass."""
+    project = tmp_path / "project"
+    ignored = project / "outputs" / "requested"
+    ignored.mkdir(parents=True)
+    (project / ".gitignore").write_text("outputs/\n")
+    (project / "app.py").write_text("print('app')\n")
+    (ignored / "run.log").write_text("ignored\n")
+    output = tmp_path / "output"
+    args = build_parser().parse_args([
+        str(project),
+        "--all",
+        "--paths",
+        str(ignored),
+        "--output-dir",
+        str(output),
+    ])
+
+    result, _, _ = run_exporter(args, None)
+
+    assert result == 0
+    manifest = json.loads(next(output.glob("*_manifest_*.json")).read_text())
+    assert manifest["selected_files"] == ["app.py"]
+    assert "outputs/requested/run.log" not in manifest["selected_files"]
