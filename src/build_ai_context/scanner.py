@@ -4,8 +4,10 @@ File scanning, detection, and selection for build_ai_context.
 
 from __future__ import annotations
 
+import base64
 import fnmatch
 import hashlib
+import os
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -24,6 +26,7 @@ from build_ai_context.constants import (
     EXTRA_EXCLUDED_PATTERNS,
     SPECIAL_FILENAMES,
 )
+from build_ai_context.formats import policy_for_path
 from build_ai_context.models import SourceFile
 
 
@@ -32,16 +35,43 @@ from build_ai_context.models import SourceFile
 # ---------------------------------------------------------------------------
 
 
+def _read_gitignore_lines(gitignore_path: Path) -> List[str]:
+    """Read one .gitignore without letting an encoding issue disable filtering."""
+    if not gitignore_path.is_file():
+        return []
+    try:
+        return gitignore_path.read_text(encoding=DEFAULT_TEXT_ENCODING).splitlines()
+    except UnicodeDecodeError:
+        return gitignore_path.read_text(errors="ignore").splitlines()
+
+
+def _rebase_gitignore_lines(lines: Sequence[str], base: Path) -> List[str]:
+    """Rebase patterns from a nested .gitignore to the scan root."""
+    if not base.parts:
+        return list(lines)
+    prefix = base.as_posix().rstrip("/")
+    rebased: List[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            rebased.append(line)
+            continue
+        negated = line.startswith("!")
+        pattern = line[1:] if negated else line
+        escaped_prefix = "!" if negated else ""
+        if pattern.startswith("/"):
+            rebased.append(f"{escaped_prefix}{prefix}/{pattern.lstrip('/')}")
+        elif "/" in pattern.rstrip("/"):
+            rebased.append(f"{escaped_prefix}{prefix}/{pattern}")
+        else:
+            rebased.append(f"{escaped_prefix}{prefix}/{pattern}")
+            rebased.append(f"{escaped_prefix}{prefix}/**/{pattern}")
+    return rebased
+
+
 def load_gitignore_spec(root: Path) -> pathspec.PathSpec:
     """Load .gitignore patterns from the project root."""
-    gitignore_path = root / ".gitignore"
-    patterns: List[str] = []
-    if gitignore_path.exists():
-        try:
-            patterns.extend(gitignore_path.read_text(encoding=DEFAULT_TEXT_ENCODING).splitlines())
-        except UnicodeDecodeError:
-            patterns.extend(gitignore_path.read_text(errors="ignore").splitlines())
-    return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
+    return pathspec.PathSpec.from_lines("gitwildmatch", _read_gitignore_lines(root / ".gitignore"))
 
 
 def path_matches_any_pattern(rel_path: str, patterns: Iterable[str]) -> bool:
@@ -119,18 +149,34 @@ def is_probably_binary(path: Path) -> bool:
         return True
 
 
-def read_text_lines(path: Path) -> List[str]:
-    """Read a text file with multiple encoding attempts."""
+def binary_lines_from_bytes(data: bytes) -> List[str]:
+    """Return binary bytes as wrapped Base64 text lines."""
+    encoded = base64.b64encode(data).decode("ascii")
+    return [encoded[index : index + 76] for index in range(0, len(encoded), 76)]
+
+
+def read_binary_lines(path: Path) -> List[str]:
+    """Return binary file bytes as wrapped Base64 text lines."""
+    return binary_lines_from_bytes(path.read_bytes())
+
+
+def text_lines_from_bytes(data: bytes) -> List[str]:
+    """Decode a byte snapshot with the scanner's supported encodings."""
     encodings = ["utf-8", "utf-8-sig", "latin-1"]
     last_error: Optional[Exception] = None
     for encoding in encodings:
         try:
-            return path.read_text(encoding=encoding).splitlines()
+            return data.decode(encoding).splitlines()
         except UnicodeDecodeError as exc:
             last_error = exc
     if last_error is not None:
-        return path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        return data.decode("utf-8", errors="ignore").splitlines()
     return []
+
+
+def read_text_lines(path: Path) -> List[str]:
+    """Read a text file with multiple encoding attempts."""
+    return text_lines_from_bytes(path.read_bytes())
 
 
 def sha256_of_lines(lines: Sequence[str]) -> str:
@@ -139,45 +185,288 @@ def sha256_of_lines(lines: Sequence[str]) -> str:
     return hashlib.sha256(joined).hexdigest()
 
 
+def _read_one_snapshot(path: Path) -> Optional[Tuple[int, bytes, str]]:
+    """Read one file's permission bits, bytes, and SHA-256."""
+    try:
+        with path.open("rb") as source_stream:
+            raw_bytes = source_stream.read()
+            mode = os.fstat(source_stream.fileno()).st_mode & 0o777
+        return mode, raw_bytes, hashlib.sha256(raw_bytes).hexdigest()
+    except OSError:
+        return None
+
+
+def _native_snapshot_reader():
+    """Return the optional Rust reader, or None when that module is not installed."""
+    try:
+        from build_ai_context import baic_native
+    except ImportError:
+        return None
+    return baic_native.read_snapshots
+
+
+def load_snapshots(paths: Sequence[Path]) -> List[Optional[Tuple[int, bytes, str]]]:
+    """Read file bytes in order. Uses the Rust reader when it is installed."""
+    if len(paths) < 32:
+        return [_read_one_snapshot(path) for path in paths]
+    reader = _native_snapshot_reader()
+    if reader is not None:
+        try:
+            loaded = reader([str(path) for path in paths])
+            if len(loaded) == len(paths):
+                return [
+                    None if item is None else (int(item[0]), bytes(item[1]), str(item[2]))
+                    for item in loaded
+                ]
+        except (OSError, TypeError, ValueError, RuntimeError):
+            pass
+    from concurrent.futures import ThreadPoolExecutor
+
+    workers = min(8, len(paths), os.cpu_count() or 1)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(_read_one_snapshot, paths))
+
+
+def _graphable_suffixes() -> set:
+    from build_ai_context.graph import GRAPHABLE_EXTENSIONS
+
+    return GRAPHABLE_EXTENSIONS
+
+
+def _base64_line_count(size_bytes: int) -> int:
+    encoded_size = ((size_bytes + 2) // 3) * 4
+    return (encoded_size + 75) // 76
+
+
+def _source_from_snapshot(
+    path: Path,
+    rel_path: Path,
+    category: str,
+    encoding: str,
+    force_format: bool,
+    snapshot: Optional[Tuple[int, bytes, str]],
+    keep_lines: bool,
+) -> Tuple[Optional[SourceFile], str]:
+    """Build a source record from bytes already read, or a skip reason."""
+    if snapshot is None:
+        return None, "read_error"
+    mode, raw_bytes, sha256 = snapshot
+    binary = b"\x00" in raw_bytes[:4096]
+    format_policy = policy_for_path(path)
+    if binary and format_policy.content_kind != "binary" and not force_format:
+        return None, "binary"
+    if force_format and binary:
+        encoding = "base64"
+    if keep_lines:
+        lines = (
+            binary_lines_from_bytes(raw_bytes)
+            if encoding == "base64"
+            else text_lines_from_bytes(raw_bytes)
+        )
+        line_count = len(lines)
+    else:
+        lines = []
+        if encoding == "base64":
+            line_count = _base64_line_count(len(raw_bytes))
+        else:
+            line_count = raw_bytes.count(b"\n")
+            if raw_bytes and not raw_bytes.endswith((b"\n", b"\r")):
+                line_count += 1
+    return (
+        SourceFile(
+            abs_path=path.resolve(),
+            rel_path=rel_path,
+            category=category,
+            line_count=line_count,
+            size_bytes=len(raw_bytes),
+            sha256=sha256,
+            lines=lines,
+            encoding=encoding,
+            snapshot_bytes=raw_bytes,
+            mode=mode,
+        ),
+        "",
+    )
+
+
+def _source_from_stat(
+    path: Path,
+    rel_path: Path,
+    category: str,
+    encoding: str,
+    force_format: bool,
+) -> Tuple[Optional[SourceFile], str]:
+    """Classify a file from its size and a short sample, without keeping the body."""
+    try:
+        stat_result = path.stat()
+    except OSError:
+        return None, "read_error"
+    format_policy = policy_for_path(path)
+    binary = False
+    if format_policy.content_kind != "binary":
+        try:
+            with path.open("rb") as source_stream:
+                binary = b"\x00" in source_stream.read(4096)
+        except OSError:
+            return None, "read_error"
+    if binary and not force_format:
+        return None, "binary"
+    if force_format and binary:
+        encoding = "base64"
+    size_bytes = stat_result.st_size
+    if encoding == "base64":
+        line_count = _base64_line_count(size_bytes)
+    else:
+        line_count = 0
+    return (
+        SourceFile(
+            abs_path=path.resolve(),
+            rel_path=rel_path,
+            category=category,
+            line_count=line_count,
+            size_bytes=size_bytes,
+            sha256="",
+            lines=[],
+            encoding=encoding,
+            snapshot_bytes=None,
+            mode=stat_result.st_mode & 0o777,
+        ),
+        "",
+    )
+
+
+def _normalize_include_formats(values: Sequence[str]) -> set[str]:
+    """Normalize user-supplied extensions to lowercase dotted suffixes."""
+    normalized: set[str] = set()
+    for value in values:
+        extension = value.strip().lower()
+        if extension.startswith("*."):
+            extension = extension[1:]
+        elif extension.startswith("*"):
+            extension = extension[1:]
+        if extension and not extension.startswith("."):
+            extension = f".{extension}"
+        if extension not in {"", "."}:
+            normalized.add(extension)
+    return normalized
+
+
 def scan_supported_files(
-    root: Path, skip_secret_files: bool
+    root: Path,
+    skip_secret_files: bool,
+    force_ignored_paths: Sequence[str] = (),
+    force_include_formats: Sequence[str] = (),
+    exclude_formats: Sequence[str] = (),
+    metadata_only: bool = False,
+    read_mode: Optional[str] = None,
 ) -> Tuple[List[SourceFile], Dict[str, int]]:
-    """Scan the project root for supported files."""
-    gitignore_spec = load_gitignore_spec(root)
+    """Scan supported files after applying authoritative format exclusions.
+
+    read_mode:
+      full — read every included file (default)
+      metadata — keep bytes and counts, do not decode line lists
+      graph — read graphable source text and only stat other files
+      paths — stat and classify, do not keep file bodies
+    """
+    if read_mode is None:
+        read_mode = "metadata" if metadata_only else "full"
+    if read_mode not in {"full", "metadata", "graph", "paths"}:
+        raise ValueError("read_mode must be full, metadata, graph, or paths")
+    graphable_suffixes = _graphable_suffixes() if read_mode == "graph" else set()
+    normalized_forced_paths = _normalize_selection_paths(force_ignored_paths, root)
+    normalized_forced_formats = _normalize_include_formats(force_include_formats)
+    normalized_excluded_formats = set(_normalize_exclude_formats(exclude_formats))
+
+    def can_force_include(rel_path: Path) -> bool:
+        rel = rel_path.as_posix().rstrip("/")
+        is_requested = any(
+            rel == requested or rel.startswith(requested + "/") or requested.startswith(rel + "/")
+            for requested in normalized_forced_paths
+        )
+        if not is_requested or ".git" in rel_path.parts:
+            return False
+        return not (skip_secret_files and path_matches_any_pattern(rel, DEFAULT_SECRET_PATTERNS))
+
     discovered: List[SourceFile] = []
     skipped_reasons: Dict[str, int] = defaultdict(int)
+    pending: List[Tuple[Path, Path, str, str, bool]] = []
+    inherited_patterns: Dict[Path, List[str]] = {root: _read_gitignore_lines(root / ".gitignore")}
 
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        rel_path = path.relative_to(root)
-        ignored, reason = is_ignored(rel_path, gitignore_spec, skip_secret_files)
-        if ignored:
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+        current_dir = Path(dirpath)
+        current_rel = current_dir.relative_to(root)
+        gitignore_lines = list(inherited_patterns.pop(current_dir, []))
+        if current_rel.parts:
+            gitignore_lines.extend(
+                _rebase_gitignore_lines(
+                    _read_gitignore_lines(current_dir / ".gitignore"), current_rel
+                )
+            )
+        gitignore_spec = pathspec.PathSpec.from_lines("gitwildmatch", gitignore_lines)
+
+        kept_dirs: List[str] = []
+        for dirname in dirnames:
+            rel_dir = current_rel / dirname
+            ignored, reason = is_ignored(rel_dir, gitignore_spec, skip_secret_files)
+            if ignored and can_force_include(rel_dir):
+                ignored = False
+            if ignored:
+                skipped_reasons[reason] += 1
+            else:
+                kept_dirs.append(dirname)
+                inherited_patterns[current_dir / dirname] = gitignore_lines
+        dirnames[:] = kept_dirs
+
+        for filename in filenames:
+            path = current_dir / filename
+            rel_path = current_rel / filename
+            if path.suffix.lower() in normalized_excluded_formats:
+                skipped_reasons["excluded_format"] += 1
+                continue
+            ignored, reason = is_ignored(rel_path, gitignore_spec, skip_secret_files)
+            if ignored and can_force_include(rel_path):
+                ignored = False
+            if ignored:
+                skipped_reasons[reason] += 1
+                continue
+            category = detect_category(path)
+            force_format = path.suffix.lower() in normalized_forced_formats
+            if not category and not force_format:
+                skipped_reasons["unsupported_type"] += 1
+                continue
+            if not category:
+                category = "config_docs"
+            encoding = policy_for_path(path).scanner_encoding
+            pending.append((path, rel_path, category, encoding, force_format))
+
+    body_indexes = [
+        index
+        for index, (path, _rel_path, _category, _encoding, _force_format) in enumerate(pending)
+        if read_mode in {"full", "metadata"}
+        or (read_mode == "graph" and path.suffix.lower() in graphable_suffixes)
+    ]
+    snapshots: Dict[int, Optional[Tuple[int, bytes, str]]] = {}
+    if body_indexes:
+        loaded = load_snapshots([pending[index][0] for index in body_indexes])
+        snapshots = dict(zip(body_indexes, loaded))
+
+    for index, (path, rel_path, category, encoding, force_format) in enumerate(pending):
+        if index in snapshots:
+            source, reason = _source_from_snapshot(
+                path,
+                rel_path,
+                category,
+                encoding,
+                force_format,
+                snapshots[index],
+                keep_lines=read_mode in {"full", "graph"},
+            )
+        else:
+            source, reason = _source_from_stat(path, rel_path, category, encoding, force_format)
+        if source is None:
             skipped_reasons[reason] += 1
             continue
-        category = detect_category(path)
-        if not category:
-            skipped_reasons["unsupported_type"] += 1
-            continue
-        if is_probably_binary(path):
-            skipped_reasons["binary"] += 1
-            continue
-        try:
-            lines = read_text_lines(path)
-        except OSError:
-            skipped_reasons["read_error"] += 1
-            continue
-        discovered.append(
-            SourceFile(
-                abs_path=path.resolve(),
-                rel_path=rel_path,
-                category=category,
-                line_count=len(lines),
-                size_bytes=path.stat().st_size,
-                sha256=sha256_of_lines(lines),
-                lines=lines,
-            )
-        )
+        discovered.append(source)
     discovered.sort(key=lambda item: item.rel_path.as_posix())
     return discovered, dict(sorted(skipped_reasons.items()))
 
@@ -228,8 +517,41 @@ def parse_csv_input(raw: str) -> List[str]:
     return [token.strip() for token in raw.split(",") if token.strip()]
 
 
+def _resolve_selection_token(
+    token: str, all_path_strs: set[str], all_names: set[str], root: Path
+) -> List[str]:
+    """Resolve one selection token without broad substring matching."""
+    candidate = token.strip()
+    if not candidate:
+        return []
+    if Path(candidate).is_absolute():
+        try:
+            candidate = Path(candidate).resolve().relative_to(root).as_posix()
+        except ValueError:
+            return []
+    if candidate in all_path_strs:
+        return [candidate]
+    if candidate in all_names:
+        return sorted(
+            path for path in all_path_strs if path == candidate or path.endswith("/" + candidate)
+        )
+    suffix_matches = sorted(path for path in all_path_strs if path.endswith("/" + candidate))
+    if suffix_matches:
+        return suffix_matches
+    if candidate.startswith(".") and "/" not in candidate:
+        extension_matches = sorted(path for path in all_path_strs if Path(path).suffix == candidate)
+        if extension_matches:
+            return extension_matches
+    if "/" not in candidate and " " not in candidate:
+        stem_matches = sorted(path for path in all_path_strs if Path(path).stem == candidate)
+        if stem_matches:
+            return stem_matches
+    directory_prefix = candidate.rstrip("/") + "/"
+    return sorted(path for path in all_path_strs if path.startswith(directory_prefix))
+
+
 def parse_intelligent_input(raw: str, files: Sequence[SourceFile], root: Path) -> List[str]:
-    """Intelligently parse input that might have mixed commas, spaces, or no separators."""
+    """Parse line-, comma-, semicolon-, or legacy space-separated path input."""
     if not raw.strip():
         return []
 
@@ -237,88 +559,53 @@ def parse_intelligent_input(raw: str, files: Sequence[SourceFile], root: Path) -
     all_names = {f.rel_path.name for f in files}
     found_paths: List[str] = []
 
-    parts = [p.strip() for p in re.split(r"[,;\s]+", raw) if p.strip()]
+    def add_matches(token: str) -> bool:
+        matches = _resolve_selection_token(token, all_path_strs, all_names, root)
+        for match in matches:
+            if match not in found_paths:
+                found_paths.append(match)
+        return bool(matches)
 
-    for part in parts:
-        if Path(part).is_absolute():
-            try:
-                rel = Path(part).resolve().relative_to(root)
-                part = rel.as_posix()
-            except ValueError:
-                pass
+    def add_segment(segment: str) -> None:
+        candidate = segment.strip()
+        if not candidate or add_matches(candidate):
+            return
 
-        if part in all_path_strs:
-            if part not in found_paths:
-                found_paths.append(part)
-            continue
+        # A quoted --paths value can contain several space-separated paths,
+        # while an individual path may itself contain spaces. Find a complete
+        # partition and prefer the longest resolvable path at each position.
+        words = candidate.split()
+        memo: Dict[int, Optional[List[List[str]]]] = {}
 
-        if part in all_names:
-            for p in all_path_strs:
-                if p.endswith("/" + part) or p == part:
-                    if p not in found_paths:
-                        found_paths.append(p)
-            continue
+        def partition(start: int) -> Optional[List[List[str]]]:
+            if start == len(words):
+                return []
+            if start in memo:
+                return memo[start]
+            for end in range(len(words), start, -1):
+                matches = _resolve_selection_token(
+                    " ".join(words[start:end]), all_path_strs, all_names, root
+                )
+                if not matches:
+                    continue
+                remainder = partition(end)
+                if remainder is not None:
+                    memo[start] = [matches] + remainder
+                    return memo[start]
+            memo[start] = None
+            return None
 
-        exact_matches = [p for p in all_path_strs if p == part or p.endswith("/" + part)]
-        if exact_matches:
-            for m in exact_matches:
-                if m not in found_paths:
-                    found_paths.append(m)
-            continue
+        resolved_groups = partition(0)
+        if resolved_groups is None:
+            return
+        for matches in resolved_groups:
+            for match in matches:
+                if match not in found_paths:
+                    found_paths.append(match)
 
-        folder_matches = [
-            p for p in all_path_strs if p.startswith(part + "/") or "/" + part + "/" in p
-        ]
-        if folder_matches:
-            for m in folder_matches:
-                if m not in found_paths:
-                    found_paths.append(m)
-            continue
-
-        contains_matches = [p for p in all_path_strs if part in p]
-        if contains_matches:
-            for m in contains_matches:
-                if m not in found_paths:
-                    found_paths.append(m)
-            continue
-
-        partial = [
-            p
-            for p in all_path_strs
-            if p.replace("/", "")
-            .replace("\\", "")
-            .startswith(part.replace("/", "").replace("\\", ""))
-        ]
-        if partial:
-            for m in partial:
-                if m not in found_paths:
-                    found_paths.append(m)
-            continue
-
-        for ext in [
-            ".dart",
-            ".py",
-            ".js",
-            ".ts",
-            ".kt",
-            ".java",
-            ".swift",
-            ".md",
-            ".json",
-            ".yaml",
-            ".xml",
-            ".txt",
-            ".properties",
-        ]:
-            if ext in part:
-                matching_files = [
-                    p for p in all_path_strs if p.endswith(part) or p.endswith("/" + part)
-                ]
-                for m in matching_files:
-                    if m not in found_paths:
-                        found_paths.append(m)
-                if matching_files:
-                    break
+    for raw_line in raw.splitlines():
+        for segment in re.split(r"[,;]+", raw_line):
+            add_segment(segment)
 
     return found_paths
 
@@ -381,6 +668,64 @@ def filter_files_by_paths(
     return matched, normalized_paths, missing_inputs
 
 
+def expand_explicit_path_inputs(raw_paths: Sequence[str], root: Path) -> List[str]:
+    """Split combined CLI path values using paths that actually exist on disk.
+
+    Shell aliases commonly forward one quoted value containing multiple paths.
+    Resolve the longest existing path at each word boundary so paths containing
+    spaces remain intact while multiple paths still become separate scan roots.
+    """
+    expanded: List[str] = []
+
+    def add(candidate: str) -> None:
+        value = candidate.strip()
+        if value and value not in expanded:
+            expanded.append(value)
+
+    def exists(candidate: str) -> bool:
+        path = Path(candidate).expanduser()
+        return (path if path.is_absolute() else root / path).exists()
+
+    def split_segment(segment: str) -> None:
+        candidate = segment.strip()
+        if not candidate:
+            return
+        if exists(candidate):
+            add(candidate)
+            return
+        words = candidate.split()
+        memo: Dict[int, Optional[List[str]]] = {}
+
+        def partition(start: int) -> Optional[List[str]]:
+            if start == len(words):
+                return []
+            if start in memo:
+                return memo[start]
+            for end in range(len(words), start, -1):
+                part = " ".join(words[start:end])
+                if not exists(part):
+                    continue
+                remainder = partition(end)
+                if remainder is not None:
+                    memo[start] = [part] + remainder
+                    return memo[start]
+            memo[start] = None
+            return None
+
+        resolved = partition(0)
+        if resolved is None:
+            add(candidate)
+            return
+        for value in resolved:
+            add(value)
+
+    for raw in raw_paths:
+        for line in raw.splitlines():
+            for segment in re.split(r"[,;]+", line):
+                split_segment(segment)
+    return expanded
+
+
 def _normalize_selection_paths(raw_paths: Sequence[str], root: Path) -> List[str]:
     """Normalize path selections."""
     normalized: List[str] = []
@@ -402,6 +747,59 @@ def _normalize_selection_paths(raw_paths: Sequence[str], root: Path) -> List[str
     return normalized
 
 
+def _normalize_exclude_formats(raw_formats: Sequence[str]) -> List[str]:
+    """Normalize extension exclusions from repeated, comma, or newline-separated values."""
+    normalized: List[str] = []
+    for raw in raw_formats:
+        for token in re.split(r"[,;\s]+", raw):
+            value = token.strip().lower()
+            if not value:
+                continue
+            if value.startswith("*."):
+                value = value[1:]
+            elif not value.startswith("."):
+                value = "." + value
+            if value not in normalized:
+                normalized.append(value)
+    return normalized
+
+
+def exclude_files(
+    files: Sequence[SourceFile],
+    root: Path,
+    raw_paths: Sequence[str] = (),
+    raw_formats: Sequence[str] = (),
+) -> Tuple[List[SourceFile], List[str], List[str]]:
+    """Remove path and extension matches from the final set selected for bundling."""
+    path_inputs: List[str] = []
+    if raw_paths:
+        parsed = parse_intelligent_input("\n".join(raw_paths), files, root)
+        path_inputs = parsed or list(raw_paths)
+    if path_inputs:
+        excluded_by_path, normalized_paths, _ = filter_files_by_paths(files, root, path_inputs)
+    else:
+        excluded_by_path, normalized_paths = [], []
+    excluded_path_set = {item.rel_path.as_posix() for item in excluded_by_path}
+    normalized_formats = _normalize_exclude_formats(raw_formats)
+    kept = [
+        item
+        for item in files
+        if item.rel_path.as_posix() not in excluded_path_set
+        and item.rel_path.suffix.lower() not in normalized_formats
+    ]
+    kept.sort(key=lambda item: item.rel_path.as_posix())
+    return kept, normalized_paths, normalized_formats
+
+
+def _searchable_text(item: SourceFile) -> str:
+    """Return text for keyword search without forcing every scan to keep lines."""
+    if item.lines:
+        return "\n".join(item.lines)
+    if not item.snapshot_bytes or item.encoding == "base64":
+        return ""
+    return "\n".join(text_lines_from_bytes(item.snapshot_bytes))
+
+
 def filter_files_by_keywords(
     files: Sequence[SourceFile], keywords: Sequence[str]
 ) -> Tuple[List[SourceFile], List[str]]:
@@ -411,7 +809,7 @@ def filter_files_by_keywords(
     keywords_lower = [k.lower() for k in keywords]
 
     for item in files:
-        content_lower = "\n".join(item.lines).lower()
+        content_lower = _searchable_text(item).lower()
         found_keywords = [kw for kw in keywords_lower if kw in content_lower]
         if found_keywords:
             matched.append(item)

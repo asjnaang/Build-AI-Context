@@ -5,6 +5,8 @@ Command-line interface for build_ai_context package.
 from __future__ import annotations
 
 import argparse
+import json
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +29,18 @@ from build_ai_context.constants import (
 )
 from build_ai_context.exporter import CodeExporter
 from build_ai_context.models import SourceFile
+from build_ai_context.planning import build_export_plan
+from build_ai_context.restore import RestoreError, restore_export
+from build_ai_context.scanner import expand_explicit_path_inputs
+
+
+class ExportAllAction(argparse.Action):
+    """Enable non-interactive export while retaining an explicit all-files intent."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        del parser, values, option_string
+        setattr(namespace, self.dest, True)
+        setattr(namespace, "non_interactive", True)
 from build_ai_context.update_source_file_headers import DEFAULT_EXCLUDES, walk_and_update
 
 
@@ -43,6 +57,33 @@ def build_parser() -> argparse.ArgumentParser:
         default=".",
         help="Project root to scan. Defaults to the current working directory.",
     )
+    parser.add_argument(
+        "--restore",
+        nargs="?",
+        const=".",
+        metavar="EXPORT_PATH",
+        help=(
+            "Restore exact files from a tar-gz BAIC export directory or manifest. "
+            "When EXPORT_PATH is omitted, read the export from the current directory. "
+            "By default, create PROJECT_NAME in the current directory."
+        ),
+    )
+    parser.add_argument(
+        "--restore-output",
+        metavar="DIR",
+        help=(
+            "Destination directory for --restore. Defaults to PROJECT_NAME under the "
+            "current working directory."
+        ),
+    )
+    parser.add_argument(
+        "--restore-force",
+        action="store_true",
+        help=(
+            "Replace an existing restore destination. Requires --restore and never "
+            "modifies the export source directory."
+        ),
+    )
     # Bundle packing size is fixed at DEFAULT_MAX_LINES (8000). Only the per-source
     # file inclusion threshold is CLI-overridable.
     parser.add_argument(
@@ -57,6 +98,63 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--force-ignored",
+        action="store_true",
+        help=(
+            "Include supported files under explicit --paths even when those paths "
+            "are excluded by .gitignore or generated-file/default exclusion rules. "
+            "Secret-like files still require --include-secret-files."
+        ),
+    )
+    parser.add_argument(
+        "--force-include-formats",
+        nargs="+",
+        default=[],
+        metavar="EXT",
+        help=(
+            "Include otherwise unsupported file extensions with --transport tar-gz. "
+            "Values may be written as rs, .rs, or *.rs. Binary files are preserved "
+            "byte-for-byte in the compressed payload."
+        ),
+    )
+    parser.add_argument(
+        "--force-bundle",
+        action="store_true",
+        help=(
+            "Bundle selected files regardless of --max-file-lines. Oversized JSON "
+            "is sampled in memory when possible; source files are never modified."
+        ),
+    )
+    parser.add_argument(
+        "--transport",
+        choices=["tar-gz", "text"],
+        default="tar-gz",
+        help=(
+            "Context transport (default: tar-gz). text creates readable framed bundles; "
+            "tar-gz creates one Base64 text payload containing a deterministic tar.gz archive."
+        ),
+    )
+    parser.add_argument(
+        "--split",
+        action="store_true",
+        help=(
+            "Split tar-gz transport into deterministic Base64 payload parts, each no larger "
+            "than 19.9 MB. Files are encoded as independently compressed TAR members, packed "
+            "by exact compressed size, and reconstructed as one standard concatenated gzip "
+            "stream per payload. Default tar-gz behavior remains one payload."
+        ),
+    )
+    parser.add_argument(
+        "--binary-policy",
+        choices=["include", "skip", "compressed-only"],
+        default="include",
+        help=(
+            "Binary-source policy (default: include). include Base64-wraps binary "
+            "formats in text transport; skip excludes them; compressed-only includes "
+            "them only with --transport tar-gz."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         default=None,
         help="Optional output directory. Defaults to a timestamped folder under the current directory.",
@@ -68,9 +166,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--all",
-        dest="non_interactive",
-        action="store_true",
-        help="Export all supported files without prompts.",
+        dest="select_all",
+        action=ExportAllAction,
+        nargs=0,
+        default=False,
+        help=(
+            "Export all normally discoverable supported files without prompts. Explicit "
+            "--paths are additive; with --force-ignored, only ignored files under those "
+            "paths are additionally included."
+        ),
     )
     parser.add_argument(
         "--categories",
@@ -89,6 +193,30 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="*",
         default=[],
         help="Keywords to search in file content (non-interactive mode).",
+    )
+    parser.add_argument(
+        "--exclude-paths",
+        nargs="*",
+        default=[],
+        help="Files or folders to remove from the final selected set before bundling.",
+    )
+    parser.add_argument(
+        "--exclude-formats",
+        nargs="*",
+        default=[],
+        help="File extensions to remove from the final selected set, such as .json py or *.md.",
+    )
+    task_group = parser.add_mutually_exclusive_group()
+    task_group.add_argument(
+        "--task",
+        default=None,
+        help="Replace the Task placeholder in the generated transport-specific prompt.",
+    )
+    task_group.add_argument(
+        "--task-clipboard",
+        "--tc",
+        action="store_true",
+        help="Read the Task Contract from the macOS clipboard using pbpaste.",
     )
     parser.add_argument(
         "--include-secret-files",
@@ -142,10 +270,40 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def resolve_task_content(args) -> str | None:
+    """Return task text from --task or the macOS clipboard."""
+    if not getattr(args, "task_clipboard", False):
+        return getattr(args, "task", None)
+    try:
+        completed = subprocess.run(["pbpaste"], check=True, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise ValueError("--task-clipboard/--tc requires the macOS pbpaste command") from exc
+    except subprocess.CalledProcessError as exc:
+        raise ValueError("Unable to read task content from the macOS clipboard") from exc
+    if not completed.stdout:
+        raise ValueError("The macOS clipboard does not contain task text")
+    return completed.stdout
+
+
 def main() -> int:
     """Main entry point for the CLI."""
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.restore:
+        try:
+            destination, restored_count = restore_export(
+                Path(args.restore),
+                Path(args.restore_output) if args.restore_output else None,
+                force=args.restore_force,
+            )
+        except RestoreError as error:
+            parser.error(str(error))
+        print(f"Restore complete: {restored_count} file(s) written to {destination}")
+        return 0
+
+    if args.restore_output or args.restore_force:
+        parser.error("--restore-output and --restore-force require --restore")
 
     # Handle --update-headers
     if args.update_headers:
@@ -188,9 +346,15 @@ def run_quick_artifacts(args) -> int:
             print(f"Error: Project root is not a directory: {root}", file=sys.stderr)
             return 1
 
-        exporter.print_info(f"Scanning project: {root}")
+        exporter.print_path("Scanning project: ", root, style="cyan")
 
-        all_files, _skipped_reasons = exporter.scan_supported_files(root, skip_secret_files=True)
+        if args.graph:
+            read_mode = "graph"
+        else:
+            read_mode = "paths"
+        all_files, _skipped_reasons = exporter.scan_supported_files(
+            root, skip_secret_files=True, read_mode=read_mode
+        )
         if not all_files:
             exporter.print_warning("No supported files found.")
             return 1
@@ -204,7 +368,8 @@ def run_quick_artifacts(args) -> int:
         if getattr(args, "tree", False):
             filetree_content = exporter.generate_filetree(all_files, root)
             filetree_name = f"{folder_name}_file_tree_{timestamp}.txt"
-            filetree_path = root / filetree_name
+            output_root = exporter.generated_files_dir(root)
+            filetree_path = output_root / filetree_name
             filetree_path.write_text(filetree_content, encoding="utf-8")
             exporter.update_gitignore(root, filetree_name)
             exporter.print_success(f"\nFiletree created: {filetree_path}")
@@ -212,12 +377,11 @@ def run_quick_artifacts(args) -> int:
 
         if getattr(args, "graph", False):
             output_format = getattr(args, "output_format", "txt") or "txt"
-            graph_content = exporter.generate_graph(
-                all_files, root, output_format=output_format
-            )
+            graph_content = exporter.generate_graph(all_files, root, output_format=output_format)
             ext = "json" if output_format == "json" else "txt"
             graph_name = f"{folder_name}_code_graph_{timestamp}.{ext}"
-            graph_path = root / graph_name
+            output_root = exporter.generated_files_dir(root)
+            graph_path = output_root / graph_name
             graph_path.write_text(graph_content, encoding="utf-8")
             exporter.update_gitignore(root, graph_name)
             exporter.print_success(f"Code graph created: {graph_path}")
@@ -236,6 +400,9 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         exporter = CodeExporter(redact=getattr(args, "redact", False))
 
     try:
+        task = resolve_task_content(args)
+        if args.transport == "tar-gz" and getattr(args, "redact", False):
+            raise ValueError("--redact requires --transport text")
         root = Path(args.project_root).expanduser().resolve()
         if not root.exists():
             print(f"Error: Project root does not exist: {root}", file=sys.stderr)
@@ -247,6 +414,12 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         if args.max_file_lines < 0:
             print("Error: --max-file-lines must be >= 0 (0 = unlimited)", file=sys.stderr)
             return 1, None, None
+        if args.force_include_formats and args.transport != "tar-gz":
+            print(
+                "Error: --force-include-formats requires --transport tar-gz",
+                file=sys.stderr,
+            )
+            return 1, None, None
 
         # Output bundle size is intentionally fixed; only source-file limit is overridable.
         bundle_max_lines = DEFAULT_MAX_LINES
@@ -256,9 +429,19 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         if pre_scanned:
             all_files, skipped_reasons = pre_scanned
         else:
-            exporter.print_info(f"Scanning project: {root}")
+            exporter.print_path("Scanning project: ", root, style="cyan")
+            forced_scan_paths = (
+                expand_explicit_path_inputs(args.paths, root)
+                if getattr(args, "force_ignored", False)
+                else []
+            )
             all_files, skipped_reasons = exporter.scan_supported_files(
-                root, skip_secret_files=skip_secret_files
+                root,
+                skip_secret_files=skip_secret_files,
+                force_ignored_paths=forced_scan_paths,
+                force_include_formats=args.force_include_formats,
+                exclude_formats=args.exclude_formats,
+                metadata_only=args.transport == "tar-gz",
             )
 
         if not all_files:
@@ -267,10 +450,21 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             )
             return 0, None, None
 
-        exporter.print_info(f"Detected {len(all_files)} supported text file(s).")
+        exporter.print_info(f"Detected {len(all_files)} supported file(s).")
 
         if args.non_interactive:
-            if args.keywords:
+            if args.select_all:
+                selected_files = list(all_files)
+                selection_metadata = {
+                    "selection_mode": "all",
+                    "selected_categories": [],
+                    "selected_paths": exporter._normalize_selection_paths(
+                        expand_explicit_path_inputs(args.paths, root), root
+                    ),
+                    "name_filters": [],
+                    "missing_paths": [],
+                }
+            elif args.keywords:
                 matched_files, matched_keywords = exporter.filter_files_by_keywords(
                     all_files, args.keywords
                 )
@@ -291,8 +485,9 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
                     return 0, all_files, skipped_reasons
             else:
                 path_inputs = args.paths
-                if args.paths and len(args.paths) == 1:
-                    path_inputs = exporter.parse_intelligent_input(args.paths[0], all_files, root)
+                if args.paths:
+                    raw_path_input = "\n".join(args.paths)
+                    path_inputs = exporter.parse_intelligent_input(raw_path_input, all_files, root)
                     if not path_inputs:
                         path_inputs = args.paths
                 selected_files, selection_metadata = exporter.non_interactive_select_files(
@@ -306,23 +501,58 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             render_folder_table(exporter, all_files)
             selected_files, selection_metadata = interactive_select_files(exporter, all_files, root)
 
+        selected_files, excluded_paths, excluded_formats = exporter.exclude_files(
+            selected_files,
+            root,
+            getattr(args, "exclude_paths", []),
+            getattr(args, "exclude_formats", []),
+        )
+        selection_metadata["excluded_paths"] = excluded_paths
+        selection_metadata["excluded_formats"] = excluded_formats
         if not selected_files:
-            exporter.print_warning("No files selected. Nothing was exported.")
+            exporter.print_warning(
+                "No files remain after applying exclusions. Nothing was exported."
+            )
             return 0, None, None
 
         exporter.print_info(
             f"Selected {len(selected_files)} file(s) out of {len(all_files)} supported file(s)."
         )
 
-        chunks, split_items = exporter.split_into_chunks(
-            selected_files,
-            bundle_max_lines,
-            max_file_lines=args.max_file_lines,
-        )
-        warnings = [item for item in split_items if item.get("reason") == "large_file_warning"]
-        skipped_during_split = [
-            item for item in split_items if item.get("reason") != "large_file_warning"
-        ]
+        force_bundle_events: List[dict] = []
+        if args.force_bundle and args.transport == "text":
+            selected_files, force_bundle_events = exporter.force_bundle_json_files(
+                selected_files, args.max_file_lines
+            )
+        export_plan = build_export_plan(selected_files, args.transport, args.binary_policy)
+        transport_files = list(export_plan.transport_files)
+        if args.transport == "tar-gz":
+            chunks = []
+            warnings = [
+                {
+                    "path": source.rel_path.as_posix(),
+                    "reason": "large_file_warning",
+                    "line_count": source.line_count,
+                    "threshold": args.max_file_lines,
+                }
+                for source in transport_files
+                if args.max_file_lines and source.line_count >= args.max_file_lines
+            ]
+            skipped_during_split = []
+        else:
+            effective_max_file_lines = 0 if args.force_bundle else args.max_file_lines
+            chunks, split_items = exporter.split_into_chunks(
+                transport_files,
+                bundle_max_lines,
+                max_file_lines=effective_max_file_lines,
+            )
+            warnings = [
+                item for item in split_items if item.get("reason") == "large_file_warning"
+            ]
+            warnings.extend(force_bundle_events)
+            skipped_during_split = [
+                item for item in split_items if item.get("reason") != "large_file_warning"
+            ]
         if not args.non_interactive:
             forced_files = select_oversized_files_for_inclusion(
                 selected_files, skipped_during_split, exporter
@@ -339,13 +569,16 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
                 skipped_during_split = [
                     item for item in skipped_during_split if item.get("path") not in forced_paths
                 ]
-        bundles, skipped_during_pack = exporter.pack_chunks(chunks, bundle_max_lines)
+        if args.transport == "tar-gz":
+            bundles, skipped_during_pack = [], []
+        else:
+            bundles, skipped_during_pack = exporter.pack_chunks(chunks, bundle_max_lines)
         skipped_during_processing = skipped_during_split + skipped_during_pack
 
         output_dir = (
             Path(args.output_dir).expanduser().resolve()
             if args.output_dir
-            else Path.cwd() / exporter.sanitize_output_dir_name(root)
+            else exporter.generated_files_dir(root) / exporter.sanitize_output_dir_name(root)
         )
 
         # Extract timestamp from output_dir name for consistency
@@ -362,6 +595,7 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
         manifest_path = exporter.write_bundles_and_manifest(
             root=root,
             selected_files=selected_files,
+            transport_files=transport_files,
             bundles=bundles,
             output_dir=output_dir,
             max_lines=bundle_max_lines,
@@ -374,6 +608,11 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             filetree_name=filetree_name,
             filetree_content=filetree_content,
             timestamp=timestamp,
+            task=task,
+            transport=args.transport,
+            binary_policy=args.binary_policy,
+            policy_omissions=export_plan.omitted_files,
+            split=args.split,
         )
 
         overview_path = None
@@ -388,28 +627,35 @@ def run_exporter(args, exporter, pre_scanned=None) -> int:
             )
 
         exporter.print_success("\nExport complete.")
-        exporter.print_success(f"Output directory : {output_dir}")
-        exporter.print_success(f"Manifest         : {manifest_path}")
+        exporter.print_path("Output directory : ", output_dir)
+        exporter.print_path("Manifest         : ", manifest_path)
         if overview_path is not None:
-            exporter.print_success(f"Project overview : {overview_path}")
-        exporter.print_success(f"Bundles created  : {len(bundles)}")
+            exporter.print_path("Project overview : ", overview_path)
+        written_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        exporter.print_success(
+            f"Packages created : {written_manifest.get('payload_count', len(bundles))}"
+        )
         exporter.print_success(f"Files exported   : {len(selected_files)}")
 
         if warnings:
             exporter.print_warning("\nFiles included with warnings:")
             for entry in warnings:
-                exporter.print_warning(f"  - {entry}")
+                exporter.print_warning_entry(entry, root)
         if skipped_during_processing:
             exporter.print_warning("\nFiles/chunks excluded during processing:")
             for entry in skipped_during_processing:
-                exporter.print_warning(f"  - {entry}")
+                exporter.print_warning_entry(entry, root)
 
-        if not args.non_interactive and not args.non_interactive:
+        if not args.non_interactive:
+            prompt_name = "baic_prompt.md"
+            package_name = (
+                "Base64 payload text file" if args.transport == "tar-gz" else "text bundle file(s)"
+            )
             print(
-                f"\n📝 Open 'prompt.md' in the output directory and replace the task description "
-                f"(under ## Task Contract) with your specific feature request or question or changes needed.\n"
-                f"Then upload all bundle files along with prompt.md and ask your AI assistant address the promt.md "
-                f"for best results.\n\n"
+                f"\n📝 Open '{prompt_name}' in the output directory and replace the "
+                f"description under ## Task if --task was not supplied.\n"
+                f"Upload the generated {package_name}, manifest JSON, and {prompt_name} "
+                f"to your AI assistant.\n\n"
             )
 
         return 0, all_files, skipped_reasons
@@ -426,6 +672,21 @@ def interactive_main() -> int:
     """Main entry point for interactive mode with loop."""
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.restore:
+        try:
+            destination, restored_count = restore_export(
+                Path(args.restore),
+                Path(args.restore_output) if args.restore_output else None,
+                force=args.restore_force,
+            )
+        except RestoreError as error:
+            parser.error(str(error))
+        print(f"Restore complete: {restored_count} file(s) written to {destination}")
+        return 0
+
+    if args.restore_output or args.restore_force:
+        parser.error("--restore-output and --restore-force require --restore")
 
     # Handle --update-headers
     if args.update_headers:
