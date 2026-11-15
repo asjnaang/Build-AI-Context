@@ -45,7 +45,7 @@ intellijPlatform {
         id = "com.asjnaang.buildaicontext"
         name = "Build AI Context"
         version.set(providers.gradleProperty("version"))
-        description.set("Scan a project, filter files, and export AI-readable source bundles without Python.")
+        description.set("Choose files and options, then Export. gzip default matches the CLI. No Python required.")
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
             untilBuild = provider { null }
@@ -56,7 +56,7 @@ intellijPlatform {
         }
         changeNotes.set(
             """
-            <p>0.1.0 — first Host: Scan, Export, Add to AI Context, Generate Filetree / Code Graph.</p>
+            <p>0.1.0 — Export-first Host: catalog loads with the project, gzip default, Restore.</p>
             """.trimIndent(),
         )
     }

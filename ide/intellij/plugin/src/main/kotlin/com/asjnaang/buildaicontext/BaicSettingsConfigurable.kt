@@ -15,7 +15,14 @@ class BaicSettingsConfigurable : Configurable {
     private val includeSecretFiles = JBCheckBox("Include secret-like files")
     private val projectOverview = JBCheckBox("Write project overview")
     private val updateGitignore = JBCheckBox("Update .gitignore")
+    private val forceBundle = JBCheckBox("Force bundle oversized files")
+    private val forceIgnored = JBCheckBox("Force ignored paths")
+    private val split = JBCheckBox("Split gzip payloads under 19.9 MB")
     private val writeGraph = ComboBox(arrayOf("off", "txt", "json"))
+    private val transport = ComboBox(arrayOf("tar-gz", "text"))
+    private val excludePaths = JBTextField()
+    private val forceIncludeFormats = JBTextField()
+    private val task = JBTextField()
     private var panel: JComponent? = null
 
     override fun getDisplayName(): String = "Build AI Context"
@@ -30,6 +37,27 @@ class BaicSettingsConfigurable : Configurable {
             }
             row("Write graph:") {
                 cell(writeGraph)
+            }
+            row("Transport:") {
+                cell(transport).comment("gzip default matches CLI")
+            }
+            row("Exclude paths:") {
+                cell(excludePaths).align(AlignX.FILL)
+            }
+            row("Force include formats:") {
+                cell(forceIncludeFormats).align(AlignX.FILL)
+            }
+            row("Task for prompt:") {
+                cell(task).align(AlignX.FILL)
+            }
+            row {
+                cell(forceBundle)
+            }
+            row {
+                cell(forceIgnored)
+            }
+            row {
+                cell(split)
             }
             row {
                 cell(redact)
@@ -57,7 +85,14 @@ class BaicSettingsConfigurable : Configurable {
             includeSecretFiles.isSelected != s.includeSecretFiles ||
             projectOverview.isSelected != s.projectOverview ||
             updateGitignore.isSelected != s.updateGitignore ||
-            (writeGraph.selectedItem as String) != s.writeGraph
+            forceBundle.isSelected != s.forceBundle ||
+            forceIgnored.isSelected != s.forceIgnored ||
+            split.isSelected != s.split ||
+            (writeGraph.selectedItem as String) != s.writeGraph ||
+            (transport.selectedItem as String) != s.transport ||
+            excludePaths.text != s.excludePaths ||
+            forceIncludeFormats.text != s.forceIncludeFormats ||
+            task.text != s.task
     }
 
     override fun apply() {
@@ -69,6 +104,13 @@ class BaicSettingsConfigurable : Configurable {
         s.projectOverview = projectOverview.isSelected
         s.updateGitignore = updateGitignore.isSelected
         s.writeGraph = writeGraph.selectedItem as String
+        s.transport = transport.selectedItem as String
+        s.forceBundle = forceBundle.isSelected
+        s.forceIgnored = forceIgnored.isSelected
+        s.split = split.isSelected
+        s.excludePaths = excludePaths.text.trim()
+        s.forceIncludeFormats = forceIncludeFormats.text.trim()
+        s.task = task.text.trim()
     }
 
     override fun reset() {
@@ -80,5 +122,12 @@ class BaicSettingsConfigurable : Configurable {
         projectOverview.isSelected = s.projectOverview
         updateGitignore.isSelected = s.updateGitignore
         writeGraph.selectedItem = s.writeGraph
+        transport.selectedItem = s.transport
+        forceBundle.isSelected = s.forceBundle
+        forceIgnored.isSelected = s.forceIgnored
+        split.isSelected = s.split
+        excludePaths.text = s.excludePaths
+        forceIncludeFormats.text = s.forceIncludeFormats
+        task.text = s.task
     }
 }

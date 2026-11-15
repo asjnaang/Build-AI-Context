@@ -14,6 +14,7 @@ const pkg = JSON.parse(
     menus?: Record<string, Array<{ command: string; when?: string }>>;
     views?: Record<string, Array<{ id: string; visibility?: string }>>;
     viewsWelcome?: Array<{ view: string; contents: string }>;
+    walkthroughs?: unknown;
   };
 };
 
@@ -41,6 +42,9 @@ test("write commands require a trusted workspace", () => {
 test("filter commands include filename, paths, and setting toggles", () => {
   const ids = new Set((pkg.contributes?.commands ?? []).map((c) => c.command));
   for (const id of [
+    "baic.searchFiles",
+    "baic.chooseFormat",
+    "baic.selectSearchResults",
     "baic.setNameFilter",
     "baic.setPathFilter",
     "baic.toggleSecrets",
@@ -51,12 +55,17 @@ test("filter commands include filename, paths, and setting toggles", () => {
   }
 });
 
-test("Files opens first with a visible Scan action", () => {
+test("Files opens first with Export as the primary action", () => {
   const views = pkg.contributes?.views?.baic ?? [];
   assert.equal(views[0]?.id, "baic.files");
-  assert.equal(views.find((view) => view.id === "baic.filters")?.visibility, "collapsed");
+  assert.equal(views[1]?.id, "baic.filters");
   const welcome = pkg.contributes?.viewsWelcome?.find((item) => item.view === "baic.files");
-  assert.match(welcome?.contents ?? "", /\[Scan project\]\(command:baic\.scan\)/);
+  assert.match(welcome?.contents ?? "", /\[Export\]\(command:baic\.export\)/);
   const menu = pkg.contributes?.menus?.["view/title"] ?? [];
   assert.ok(menu.some((item) => item.command === "baic.export" && item.when?.includes("baic.files")));
+  const ids = new Set((pkg.contributes?.commands ?? []).map((c) => c.command));
+  assert.ok(ids.has("baic.restore"));
+  const walkthrough = JSON.stringify(pkg.contributes?.walkthroughs ?? []);
+  assert.equal(/Scan And Select/i.test(walkthrough), false);
+  assert.match(welcome?.contents ?? "", /\[Restore gzip\]\(command:baic\.restore\)/);
 });

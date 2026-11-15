@@ -3,15 +3,15 @@
     <name>Build AI Context</name>
     <vendor url="https://github.com/asjnaang/Build-AI-Context">ASJN</vendor>
     <description><![CDATA[
-      <p>Scan a project, filter files, and export AI-readable source bundles without installing Python.</p>
-      <p>Selection is composed filters plus a checkbox tree. Oversized files are shown unchecked by default.
-      Export writes bundles, a manifest, and an Agent Contract (<code>prompt.md</code>).</p>
+      <p>Choose files and options, then Export. Cataloging is automatic. No Python required.</p>
+      <p>gzip (tar-gz) is the default, matching the CLI. Export writes bundles, a manifest, and
+      <code>baic_prompt.md</code>. Restore unpacks a gzip export.</p>
       <p>Works on IntelliJ IDEA, Android Studio, WebStorm, PyCharm, and other IntelliJ Platform IDEs
       (depends on <code>com.intellij.modules.platform</code> only).</p>
     ]]></description>
     <change-notes><![CDATA[
-      <p>0.1.0 — first Host: Scan, Export, Add to AI Context, Generate Filetree / Code Graph.
-      Restricted writes stay in the project. Secrets require a confirm dialog.</p>
+      <p>0.1.0 — Export-first Host: catalog loads with the project, gzip default, Restore,
+      Add to AI Context, Generate Filetree / Code Graph. Secrets require a confirm dialog.</p>
     ]]></change-notes>
     <depends>com.intellij.modules.platform</depends>
 
@@ -27,16 +27,22 @@
     </extensions>
 
     <actions>
-        <action id="com.asjnaang.buildaicontext.Scan"
-                class="com.asjnaang.buildaicontext.BaicScanAction"
-                text="Build AI Context: Scan"
-                description="Scan the project for supported files">
-            <add-to-group group-id="ToolsMenu" anchor="last"/>
-        </action>
         <action id="com.asjnaang.buildaicontext.Export"
                 class="com.asjnaang.buildaicontext.BaicExportAction"
                 text="Build AI Context: Export"
                 description="Export the current AI Context selection">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="com.asjnaang.buildaicontext.Restore"
+                class="com.asjnaang.buildaicontext.BaicRestoreAction"
+                text="Build AI Context: Restore gzip"
+                description="Restore sources from a gzip export">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="com.asjnaang.buildaicontext.Scan"
+                class="com.asjnaang.buildaicontext.BaicScanAction"
+                text="Build AI Context: Refresh catalog"
+                description="Reload the file catalog">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
         <action id="com.asjnaang.buildaicontext.Refresh"

@@ -20,6 +20,19 @@ class BaicScanAction : AnAction(), DumbAware {
     }
 }
 
+class BaicRestoreAction : AnAction(), DumbAware {
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+    override fun update(e: AnActionEvent) {
+        e.presentation.isEnabledAndVisible = e.project != null
+    }
+
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        project.getService(BaicController::class.java).restoreFromDisk()
+    }
+}
+
 class BaicExportAction : AnAction(), DumbAware {
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 

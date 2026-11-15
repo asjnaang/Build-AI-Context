@@ -29,9 +29,13 @@
     "prompt"
   ],
   "activationEvents": [
+    "onStartupFinished",
+    "onView:baic.files",
     "onView:baic.filters",
+    "onView:baic.export",
     "onCommand:baic.scan",
-    "onCommand:baic.export"
+    "onCommand:baic.export",
+    "onCommand:baic.restore"
   ],
   "main": "./dist/extension.js",
   "extensionKind": [
@@ -60,40 +64,49 @@
       "baic": [
         {
           "id": "baic.files",
-          "name": "1. Scan and select files"
-        },
-        {
-          "id": "baic.export",
-          "name": "3. Export results"
+          "name": "Files"
         },
         {
           "id": "baic.filters",
-          "name": "Filters and options",
-          "visibility": "collapsed"
+          "name": "Options"
+        },
+        {
+          "id": "baic.export",
+          "name": "Last export"
         }
       ]
     },
     "viewsWelcome": [
       {
         "view": "baic.files",
-        "contents": "Start by scanning the open folder. Then choose files with the checkboxes and export them.\n[Scan project](command:baic.scan)"
+        "contents": "Choose files and options, then Export. The catalog loads with the folder.\n[Export](command:baic.export)\n[Restore gzip](command:baic.restore)"
+      },
+      {
+        "view": "baic.filters",
+        "contents": "gzip (tar-gz) is the default, matching the CLI. Switch to text for readable bundles.\n[Export](command:baic.export)"
       },
       {
         "view": "baic.export",
-        "contents": "After scanning, select files and export a bundle.\n[Export selected files](command:baic.export)"
+        "contents": "Export writes gzip (default) or text bundles plus baic_prompt.md.\n[Export](command:baic.export)\n[Restore gzip export](command:baic.restore)"
       }
     ],
     "commands": [
       {
         "command": "baic.scan",
-        "title": "Build AI Context: Scan",
-        "icon": "$(search)",
+        "title": "Build AI Context: Refresh catalog",
+        "icon": "$(refresh)",
         "enablement": "isWorkspaceTrusted"
       },
       {
         "command": "baic.export",
         "title": "Build AI Context: Export",
         "icon": "$(export)",
+        "enablement": "isWorkspaceTrusted"
+      },
+      {
+        "command": "baic.restore",
+        "title": "Build AI Context: Restore gzip export",
+        "icon": "$(archive)",
         "enablement": "isWorkspaceTrusted"
       },
       {
@@ -162,6 +175,42 @@
       {
         "command": "baic.cycleGraph",
         "title": "Build AI Context: Cycle Graph Format"
+      },
+      {
+        "command": "baic.cycleTransport",
+        "title": "Build AI Context: Switch gzip/text"
+      },
+      {
+        "command": "baic.toggleForceBundle",
+        "title": "Build AI Context: Toggle large files"
+      },
+      {
+        "command": "baic.toggleForceIgnored",
+        "title": "Build AI Context: Toggle ignored paths"
+      },
+      {
+        "command": "baic.toggleSplit",
+        "title": "Build AI Context: Toggle split gzip"
+      },
+      {
+        "command": "baic.setExcludePaths",
+        "title": "Build AI Context: Set excluded paths"
+      },
+      {
+        "command": "baic.setForceIncludeFormats",
+        "title": "Build AI Context: Set extra formats"
+      },
+      {
+        "command": "baic.searchFiles",
+        "title": "Build AI Context: Search files"
+      },
+      {
+        "command": "baic.chooseFormat",
+        "title": "Build AI Context: Filter by file format"
+      },
+      {
+        "command": "baic.selectSearchResults",
+        "title": "Build AI Context: Select all results"
       }
     ],
     "menus": {
@@ -181,17 +230,27 @@
       ],
       "view/title": [
         {
-          "command": "baic.scan",
-          "when": "isWorkspaceTrusted && view == baic.filters",
-          "group": "navigation"
-        },
-        {
-          "command": "baic.scan",
+          "command": "baic.export",
           "when": "isWorkspaceTrusted && view == baic.files",
           "group": "navigation"
         },
         {
           "command": "baic.export",
+          "when": "isWorkspaceTrusted && view == baic.filters",
+          "group": "navigation"
+        },
+        {
+          "command": "baic.restore",
+          "when": "isWorkspaceTrusted && view == baic.files",
+          "group": "navigation"
+        },
+        {
+          "command": "baic.restore",
+          "when": "isWorkspaceTrusted && view == baic.export",
+          "group": "navigation"
+        },
+        {
+          "command": "baic.scan",
           "when": "isWorkspaceTrusted && view == baic.files",
           "group": "navigation"
         },
@@ -236,7 +295,44 @@
         },
         "baic.updateGitignore": {
           "type": "boolean",
-          "default": true
+          "default": false
+        },
+        "baic.transport": {
+          "type": "string",
+          "enum": [
+            "tar-gz",
+            "text"
+          ],
+          "default": "tar-gz",
+          "description": "gzip (default, baic_prompt_gzip.md) or readable text bundles (baic_prompt_text.md)."
+        },
+        "baic.forceBundle": {
+          "type": "boolean",
+          "default": false
+        },
+        "baic.forceIgnored": {
+          "type": "boolean",
+          "default": false
+        },
+        "baic.split": {
+          "type": "boolean",
+          "default": false,
+          "description": "Split gzip payloads to stay under 19.9 MB (CLI --split)."
+        },
+        "baic.excludePaths": {
+          "type": "string",
+          "default": "",
+          "description": "Comma-separated relative paths to exclude (CLI --exclude-paths)."
+        },
+        "baic.forceIncludeFormats": {
+          "type": "string",
+          "default": "",
+          "description": "Comma-separated extensions to include in gzip (CLI --force-include-formats)."
+        },
+        "baic.task": {
+          "type": "string",
+          "default": "",
+          "description": "Replaces the Task placeholder in baic_prompt.md."
         }
       }
     },
@@ -244,7 +340,7 @@
       {
         "id": "baic.gettingStarted",
         "title": "Build AI Context",
-        "description": "Scan, filter, and export AI-readable bundles.",
+        "description": "Choose files and options, then Export. Restore gzip exports when you need the sources back.",
         "steps": [
           {
             "id": "open",
@@ -255,9 +351,9 @@
             }
           },
           {
-            "id": "scan",
-            "title": "Scan",
-            "description": "Run **Build AI Context: Scan**.",
+            "id": "files",
+            "title": "Choose files",
+            "description": "The catalog loads with the folder. Uncheck files or set Options (gzip vs text, exclude paths, force-bundle).",
             "media": {
               "markdown": "README.md"
             }
@@ -283,7 +379,7 @@
     ]
   },
   "scripts": {
-    "compile": "mkdir -p resources && cp ../policy/policy.json ../engine-ts/prompt.md resources/ && esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "compile": "mkdir -p resources && cp ../policy/policy.json ../engine-ts/baic_prompt_gzip.md ../engine-ts/baic_prompt_text.md resources/ && esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
     "package": "npm run compile && vsce package",
     "test": "npm run compile && node --import tsx --test test/*.test.ts"
   },
