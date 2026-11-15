@@ -12,6 +12,8 @@ const pkg = JSON.parse(
   contributes?: {
     commands?: Array<{ command: string; enablement?: string }>;
     menus?: Record<string, Array<{ command: string; when?: string }>>;
+    views?: Record<string, Array<{ id: string; visibility?: string }>>;
+    viewsWelcome?: Array<{ view: string; contents: string }>;
   };
 };
 
@@ -47,4 +49,14 @@ test("filter commands include filename, paths, and setting toggles", () => {
   ]) {
     assert.ok(ids.has(id), id);
   }
+});
+
+test("Files opens first with a visible Scan action", () => {
+  const views = pkg.contributes?.views?.baic ?? [];
+  assert.equal(views[0]?.id, "baic.files");
+  assert.equal(views.find((view) => view.id === "baic.filters")?.visibility, "collapsed");
+  const welcome = pkg.contributes?.viewsWelcome?.find((item) => item.view === "baic.files");
+  assert.match(welcome?.contents ?? "", /\[Scan project\]\(command:baic\.scan\)/);
+  const menu = pkg.contributes?.menus?.["view/title"] ?? [];
+  assert.ok(menu.some((item) => item.command === "baic.export" && item.when?.includes("baic.files")));
 });

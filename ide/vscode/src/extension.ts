@@ -41,7 +41,7 @@ class FileNode extends vscode.TreeItem {
   constructor(public readonly entry: FileTreeEntry) {
     super(
       entry.name,
-      entry.kind === "dir" ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
+      entry.kind === "dir" ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
     );
     if (entry.kind === "file") {
       this.checkboxState = entry.checked
@@ -152,10 +152,18 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   })();
 
+  let filesView: vscode.TreeView<FileNode>;
+  const updateFilesMessage = () => {
+    if (!filesView) return;
+    filesView.message = state.catalog
+      ? `${state.catalog.files.length} files found · ${selectionFiles(state).length} selected. Use checkboxes, then click Export in this view's title bar.`
+      : undefined;
+  };
   const refreshAll = () => {
     filtersTree.refresh();
     filesTree.refresh();
     exportTree.refresh();
+    updateFilesMessage();
   };
 
   const workspaceRoot = () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -265,10 +273,11 @@ export function activate(context: vscode.ExtensionContext): void {
     );
   };
 
-  const filesView = vscode.window.createTreeView("baic.files", {
+  filesView = vscode.window.createTreeView("baic.files", {
     treeDataProvider: filesTree,
     showCollapseAll: true,
   });
+  updateFilesMessage();
   filesView.onDidChangeCheckboxState((e) => {
     for (const [item, box] of e.items) {
       if (item.entry.kind !== "file") continue;
@@ -276,6 +285,7 @@ export function activate(context: vscode.ExtensionContext): void {
       else state.checked.delete(item.entry.relPath);
     }
     filesTree.refresh();
+    updateFilesMessage();
   });
 
   const toggleSetting = async (key: string) => {
