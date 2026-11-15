@@ -20,8 +20,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Install policy test dependency
-        run: python -m pip install pytest
+      - name: Install Python package and policy test dependency
+        run: python -m pip install -e '.[dev]'
       - name: Policy lock
         run: PYTHONPATH=src python -m pytest tests/test_policy_lock.py -q
       - name: TypeScript engine
