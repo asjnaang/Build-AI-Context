@@ -76,17 +76,17 @@
       {
         "command": "baic.scan",
         "title": "Build AI Context: Scan",
-        "enablement": "workspaceIsTrusted"
+        "enablement": "isWorkspaceTrusted"
       },
       {
         "command": "baic.export",
         "title": "Build AI Context: Export",
-        "enablement": "workspaceIsTrusted"
+        "enablement": "isWorkspaceTrusted"
       },
       {
         "command": "baic.refresh",
         "title": "Build AI Context: Refresh",
-        "enablement": "workspaceIsTrusted"
+        "enablement": "isWorkspaceTrusted"
       },
       {
         "command": "baic.addCurrentFile",
@@ -119,12 +119,12 @@
       {
         "command": "baic.generateFiletree",
         "title": "Build AI Context: Generate Filetree",
-        "enablement": "workspaceIsTrusted"
+        "enablement": "isWorkspaceTrusted"
       },
       {
         "command": "baic.generateGraph",
         "title": "Build AI Context: Generate Code Graph",
-        "enablement": "workspaceIsTrusted"
+        "enablement": "isWorkspaceTrusted"
       },
       {
         "command": "baic.openLastExport",
@@ -156,30 +156,30 @@
         {
           "command": "baic.addExplorerPath",
           "group": "baic@1",
-          "when": "workspaceIsTrusted"
+          "when": "isWorkspaceTrusted"
         }
       ],
       "editor/context": [
         {
           "command": "baic.addCurrentFile",
           "group": "baic@1",
-          "when": "workspaceIsTrusted"
+          "when": "isWorkspaceTrusted"
         }
       ],
       "view/title": [
         {
           "command": "baic.scan",
-          "when": "workspaceIsTrusted && view == baic.filters",
+          "when": "isWorkspaceTrusted && view == baic.filters",
           "group": "navigation"
         },
         {
           "command": "baic.export",
-          "when": "workspaceIsTrusted && view == baic.files",
+          "when": "isWorkspaceTrusted && view == baic.files",
           "group": "navigation"
         },
         {
           "command": "baic.refresh",
-          "when": "workspaceIsTrusted && view == baic.files",
+          "when": "isWorkspaceTrusted && view == baic.files",
           "group": "navigation"
         }
       ]
