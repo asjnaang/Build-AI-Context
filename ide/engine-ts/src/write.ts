@@ -1,6 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { basename, isAbsolute, join } from "node:path";
 import { packChunks, renderChunkBlock, splitIntoChunks } from "./chunk.ts";
 import {
   extractTimestampFromDirName,
@@ -22,11 +21,10 @@ export function setPromptPath(path: string): void {
 }
 
 function promptMd(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
   const candidates = [
     promptPathOverride,
-    join(here, "..", "prompt.md"),
-    join(here, "prompt.md"),
+    join(process.cwd(), "prompt.md"),
+    join(process.cwd(), "ide", "engine-ts", "prompt.md"),
   ].filter((p): p is string => Boolean(p));
   for (const candidate of candidates) {
     try {

@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import type { EnginePolicy } from "./types.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const defaultPolicyPath = join(here, "..", "..", "policy", "policy.json");
+// The VS Code host supplies its packaged policy with setPolicyPath(). The
+// working-directory fallback is for direct engine use and tests.
+const defaultPolicyPath = join(process.cwd(), "..", "policy", "policy.json");
 
 let policyPath = defaultPolicyPath;
 let cached: EnginePolicy | undefined;
