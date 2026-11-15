@@ -24,8 +24,9 @@ native/target/
 
 
 node_modules/
-IntelliJ/
-Vscode/
+/IntelliJ/
+/Vscode/
+ide/.publish.env
 
 # Virtual environments
 .venv/

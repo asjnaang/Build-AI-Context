@@ -1,7 +1,7 @@
 {
   "name": "build-ai-context",
   "displayName": "Build AI Context",
-  "description": "Export a workspace into AI-readable text bundles without Python.",
+  "description": "Export a workspace into AI-readable text bundles without Python. gzip default, restore, no upload.",
   "version": "0.1.0",
   "publisher": "asjnaang",
   "license": "MIT",
@@ -19,20 +19,28 @@
     "vscode": "^1.90.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Machine Learning"
   ],
+  "galleryBanner": {
+    "color": "#315FAD",
+    "theme": "dark"
+  },
   "keywords": [
     "ai",
     "context",
     "export",
     "bundle",
-    "prompt"
+    "prompt",
+    "gzip",
+    "llm",
+    "android",
+    "kotlin",
+    "restore"
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onView:baic.files",
-    "onView:baic.filters",
-    "onView:baic.export",
+    "onView:baic.panel",
     "onCommand:baic.scan",
     "onCommand:baic.export",
     "onCommand:baic.restore"
@@ -63,33 +71,12 @@
     "views": {
       "baic": [
         {
-          "id": "baic.files",
-          "name": "Files"
-        },
-        {
-          "id": "baic.filters",
-          "name": "Options"
-        },
-        {
-          "id": "baic.export",
-          "name": "Last export"
+          "type": "webview",
+          "id": "baic.panel",
+          "name": "AI Context"
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "baic.files",
-        "contents": "Choose files and options, then Export. The catalog loads with the folder.\n[Export](command:baic.export)\n[Restore gzip](command:baic.restore)"
-      },
-      {
-        "view": "baic.filters",
-        "contents": "gzip (tar-gz) is the default, matching the CLI. Switch to text for readable bundles.\n[Export](command:baic.export)"
-      },
-      {
-        "view": "baic.export",
-        "contents": "Export writes gzip (default) or text bundles plus baic_prompt.md.\n[Export](command:baic.export)\n[Restore gzip export](command:baic.restore)"
-      }
-    ],
     "commands": [
       {
         "command": "baic.scan",
@@ -231,32 +218,17 @@
       "view/title": [
         {
           "command": "baic.export",
-          "when": "isWorkspaceTrusted && view == baic.files",
-          "group": "navigation"
-        },
-        {
-          "command": "baic.export",
-          "when": "isWorkspaceTrusted && view == baic.filters",
+          "when": "isWorkspaceTrusted && view == baic.panel",
           "group": "navigation"
         },
         {
           "command": "baic.restore",
-          "when": "isWorkspaceTrusted && view == baic.files",
-          "group": "navigation"
-        },
-        {
-          "command": "baic.restore",
-          "when": "isWorkspaceTrusted && view == baic.export",
+          "when": "isWorkspaceTrusted && view == baic.panel",
           "group": "navigation"
         },
         {
           "command": "baic.scan",
-          "when": "isWorkspaceTrusted && view == baic.files",
-          "group": "navigation"
-        },
-        {
-          "command": "baic.refresh",
-          "when": "isWorkspaceTrusted && view == baic.files",
+          "when": "isWorkspaceTrusted && view == baic.panel",
           "group": "navigation"
         }
       ]
@@ -304,7 +276,7 @@
             "text"
           ],
           "default": "tar-gz",
-          "description": "gzip (default, baic_prompt_gzip.md) or readable text bundles (baic_prompt_text.md)."
+          "description": "gzip (default) or readable text bundles. Both write baic_prompt.md."
         },
         "baic.forceBundle": {
           "type": "boolean",
@@ -353,7 +325,7 @@
           {
             "id": "files",
             "title": "Choose files",
-            "description": "The catalog loads with the folder. Uncheck files or set Options (gzip vs text, exclude paths, force-bundle).",
+            "description": "Search and filter in the AI Context panel. Uncheck files or set Options (gzip vs text, exclude paths, force-bundle).",
             "media": {
               "markdown": "README.md"
             }

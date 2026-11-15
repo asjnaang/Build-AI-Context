@@ -12,7 +12,7 @@ const pkg = JSON.parse(
   contributes?: {
     commands?: Array<{ command: string; enablement?: string }>;
     menus?: Record<string, Array<{ command: string; when?: string }>>;
-    views?: Record<string, Array<{ id: string; visibility?: string }>>;
+    views?: Record<string, Array<{ id: string; type?: string; visibility?: string }>>;
     viewsWelcome?: Array<{ view: string; contents: string }>;
     walkthroughs?: unknown;
   };
@@ -55,17 +55,16 @@ test("filter commands include filename, paths, and setting toggles", () => {
   }
 });
 
-test("Files opens first with Export as the primary action", () => {
+test("AI Context is a single export-first panel, not three tree views", () => {
   const views = pkg.contributes?.views?.baic ?? [];
-  assert.equal(views[0]?.id, "baic.files");
-  assert.equal(views[1]?.id, "baic.filters");
-  const welcome = pkg.contributes?.viewsWelcome?.find((item) => item.view === "baic.files");
-  assert.match(welcome?.contents ?? "", /\[Export\]\(command:baic\.export\)/);
-  const menu = pkg.contributes?.menus?.["view/title"] ?? [];
-  assert.ok(menu.some((item) => item.command === "baic.export" && item.when?.includes("baic.files")));
+  assert.equal(views.length, 1);
+  assert.equal(views[0]?.id, "baic.panel");
+  assert.equal(views[0]?.type, "webview");
   const ids = new Set((pkg.contributes?.commands ?? []).map((c) => c.command));
+  assert.ok(ids.has("baic.export"));
   assert.ok(ids.has("baic.restore"));
   const walkthrough = JSON.stringify(pkg.contributes?.walkthroughs ?? []);
   assert.equal(/Scan And Select/i.test(walkthrough), false);
-  assert.match(welcome?.contents ?? "", /\[Restore gzip\]\(command:baic\.restore\)/);
+  const menu = pkg.contributes?.menus?.["view/title"] ?? [];
+  assert.ok(menu.some((item) => item.command === "baic.export" && item.when?.includes("baic.panel")));
 });

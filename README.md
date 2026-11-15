@@ -4,14 +4,14 @@ Export selected source and project files as readable text bundles or a Base64-en
 
 **Commands:** `build-ai-context` or `baic` (short alias)
 
-## IDE Hosts (preview)
+## IDE Hosts
 
-Developers who cannot install Python can use the same Export workflow from the editor:
+Developers who cannot install Python can use the same Export workflow from the editor. Each Host is one **AI Context** panel: search, file format, Export, a checkable tree, Options, and Last export. gzip is the default and writes `baic_prompt.md`.
 
-- **VS Code** — [`ide/vscode`](ide/vscode) (`npm --prefix ide/vscode run package`, then *Install from VSIX…*)
-- **IntelliJ Platform** — [`ide/intellij/plugin`](ide/intellij/plugin) (Gradle `:plugin:buildPlugin`; loads in IntelliJ IDEA, Android Studio, WebStorm, PyCharm, and other platform IDEs)
+- **VS Code** — [`ide/vscode`](ide/vscode) (`asjnaang.build-ai-context`; `npm --prefix ide/vscode run package`, then *Install from VSIX…*)
+- **IntelliJ Platform** — [`ide/intellij/plugin`](ide/intellij/plugin) (`com.asjnaang.buildaicontext`; Gradle `:plugin:buildPlugin`; loads in IntelliJ IDEA, Android Studio, WebStorm, PyCharm, and other platform IDEs)
 
-These Hosts are not on the marketplaces yet. Package locally; do not require `pip`. Human publish steps: [`developer_pending.md`](developer_pending.md).
+Until the marketplace listings are live, package locally. These Hosts do not require `pip`. Human publish: [`ide/scripts/publish-marketplaces.sh`](ide/scripts/publish-marketplaces.sh) and [`developer_pending.md`](developer_pending.md). Layout reference: [`docs/ide-plugins/ui-mockup.html`](docs/ide-plugins/ui-mockup.html).
 
 ## Why use this?
 
