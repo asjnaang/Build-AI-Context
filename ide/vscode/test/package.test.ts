@@ -28,11 +28,11 @@ test("write commands require a trusted workspace", () => {
   for (const id of writeCommands) {
     const cmd = commands.find((c) => c.command === id);
     assert.ok(cmd, id);
-    assert.ok(cmd?.enablement?.includes("workspaceIsTrusted"), `${id} enablement`);
+    assert.ok(cmd?.enablement?.includes("isWorkspaceTrusted"), `${id} enablement`);
   }
   const menus = Object.values(pkg.contributes?.menus ?? {}).flat();
   for (const item of menus.filter((m) => writeCommands.includes(m.command))) {
-    assert.ok(item.when?.includes("workspaceIsTrusted"), `${item.command} menu when`);
+    assert.ok(item.when?.includes("isWorkspaceTrusted"), `${item.command} menu when`);
   }
 });
 

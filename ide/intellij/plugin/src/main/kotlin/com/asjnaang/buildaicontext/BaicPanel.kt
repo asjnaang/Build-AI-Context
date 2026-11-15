@@ -179,8 +179,8 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
                 dirNode(dir).add(node)
             }
             treeRoot.removeAllChildren()
-            for (i in 0 until newRoot.childCount) {
-                treeRoot.add(newRoot.getChildAt(i) as CheckedTreeNode)
+            while (newRoot.childCount > 0) {
+                treeRoot.add(newRoot.getChildAt(0) as CheckedTreeNode)
             }
             treeModel.reload()
             expandFolders()
