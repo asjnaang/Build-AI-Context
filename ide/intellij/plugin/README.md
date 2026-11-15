@@ -31,9 +31,9 @@ No Python, Node, or separate JRE is required beyond the IDE itself.
 
 1. Open a project.
 2. Open the **AI Context** tool window (right side).
-3. Run **Build AI Context: Scan** (Tools menu or the tool window).
-4. Toggle categories / checkboxes, or right-click a file **Add to AI Context**.
-5. Run **Build AI Context: Export**.
+3. Click **1. Scan project** at the top of the tool window.
+4. Expand folders and check the files you want. Click **Show filters** only if you need categories, keywords, filenames, or paths. You can also right-click a file and choose **Add to AI Context**.
+5. Click **3. Export selected files**.
 6. Open `prompt.md` (Agent Contract) and attach the bundles to your assistant.
 
 ## Mapping to `baic`

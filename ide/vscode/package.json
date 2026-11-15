@@ -59,28 +59,41 @@
     "views": {
       "baic": [
         {
-          "id": "baic.filters",
-          "name": "Filters"
-        },
-        {
           "id": "baic.files",
-          "name": "Files"
+          "name": "1. Scan and select files"
         },
         {
           "id": "baic.export",
-          "name": "Export"
+          "name": "3. Export results"
+        },
+        {
+          "id": "baic.filters",
+          "name": "Filters and options",
+          "visibility": "collapsed"
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "baic.files",
+        "contents": "Start by scanning the open folder. Then choose files with the checkboxes and export them.\n[Scan project](command:baic.scan)"
+      },
+      {
+        "view": "baic.export",
+        "contents": "After scanning, select files and export a bundle.\n[Export selected files](command:baic.export)"
+      }
+    ],
     "commands": [
       {
         "command": "baic.scan",
         "title": "Build AI Context: Scan",
+        "icon": "$(search)",
         "enablement": "isWorkspaceTrusted"
       },
       {
         "command": "baic.export",
         "title": "Build AI Context: Export",
+        "icon": "$(export)",
         "enablement": "isWorkspaceTrusted"
       },
       {
@@ -170,6 +183,11 @@
         {
           "command": "baic.scan",
           "when": "isWorkspaceTrusted && view == baic.filters",
+          "group": "navigation"
+        },
+        {
+          "command": "baic.scan",
+          "when": "isWorkspaceTrusted && view == baic.files",
           "group": "navigation"
         },
         {

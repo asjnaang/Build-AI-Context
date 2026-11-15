@@ -1,8 +1,6 @@
 package com.asjnaang.buildaicontext
 
 import com.asjnaang.buildaicontext.engine.loadPolicy
-import com.intellij.openapi.actionSystem.ActionManager
-import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.project.Project
 import com.intellij.ui.CheckboxTree
 import com.intellij.ui.CheckedTreeNode
@@ -13,9 +11,12 @@ import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.GridLayout
+import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JCheckBox
 import javax.swing.JComponent
+import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JTree
 import javax.swing.event.DocumentEvent
@@ -31,29 +32,30 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
     private val treeRoot = CheckedTreeNode("files")
     private val treeModel = DefaultTreeModel(treeRoot)
     private val tree: CheckboxTree
+    private lateinit var summaryLabel: JLabel
+    private lateinit var exportButton: JButton
     private var rebuilding = false
 
     init {
         tree = object : CheckboxTree(FileRenderer(), treeRoot) {
             override fun onNodeStateChanged(node: CheckedTreeNode) {
                 if (rebuilding) return
-                val row = node.userObject as? FileRow ?: return
-                if (node.isChecked) controller.state.checked.add(row.relPath)
-                else controller.state.checked.remove(row.relPath)
+                fun syncChecked(current: CheckedTreeNode) {
+                    val row = current.userObject as? FileRow
+                    if (row != null) {
+                        if (current.isChecked) controller.state.checked.add(row.relPath)
+                        else controller.state.checked.remove(row.relPath)
+                    }
+                    for (index in 0 until current.childCount) {
+                        syncChecked(current.getChildAt(index) as CheckedTreeNode)
+                    }
+                }
+                syncChecked(node)
+                updateSummary()
             }
         }
         tree.model = treeModel
         tree.isRootVisible = false
-
-        val group = DefaultActionGroup().apply {
-            add(ActionManager.getInstance().getAction("com.asjnaang.buildaicontext.Scan"))
-            add(ActionManager.getInstance().getAction("com.asjnaang.buildaicontext.Export"))
-            add(ActionManager.getInstance().getAction("com.asjnaang.buildaicontext.Refresh"))
-            add(ActionManager.getInstance().getAction("com.asjnaang.buildaicontext.Clear"))
-        }
-        toolbar = ActionManager.getInstance().createActionToolbar("BaicToolbar", group, true).apply {
-            targetComponent = this@BaicPanel
-        }.component
 
         setContent(buildUi())
         controller.addListener { reload() }
@@ -63,7 +65,7 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
     private fun buildUi(): JComponent {
         val policy = loadPolicy()
         val categoriesPanel = JPanel().apply {
-            layout = java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0)
+            layout = GridLayout(0, 2, 8, 2)
             border = JBUI.Borders.empty(4)
         }
         for (category in policy.categoryDescriptions.keys) {
@@ -88,7 +90,7 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
         listen(nameField) { controller.state.setNameFilters(nameField.text.orEmpty()) }
         listen(pathField) { controller.state.setPaths(pathField.text.orEmpty()) }
 
-        val exportButton = JButton("Export").apply {
+        exportButton = JButton("3. Export selected files").apply {
             addActionListener { controller.exportSelection() }
         }
 
@@ -105,14 +107,44 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
             row("Paths") {
                 cell(pathField).align(AlignX.FILL)
             }
-            row {
-                cell(exportButton)
-            }
         }
 
+        filters.isVisible = false
+        val scanButton = JButton("1. Scan project").apply {
+            addActionListener {
+                summaryLabel.text = "Scanning project…"
+                controller.scanProject()
+            }
+        }
+        val filtersButton = JButton("Show filters").apply {
+            addActionListener {
+                filters.isVisible = !filters.isVisible
+                text = if (filters.isVisible) "Hide filters" else "Show filters"
+                parent.revalidate()
+            }
+        }
+        summaryLabel = JLabel("Scan this project to choose files for export.")
+        val actions = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0)).apply {
+            add(scanButton)
+            add(exportButton)
+        }
+        val header = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            border = JBUI.Borders.empty(8)
+            add(JLabel("Scan → select files → export bundles"))
+            add(actions)
+            add(summaryLabel)
+            add(filtersButton)
+            add(filters)
+        }
         val wrapper = JPanel(BorderLayout())
-        wrapper.add(filters, BorderLayout.NORTH)
-        wrapper.add(JBScrollPane(tree), BorderLayout.CENTER)
+        wrapper.add(header, BorderLayout.NORTH)
+        val selection = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.empty(0, 8, 8, 8)
+            add(JLabel("2. Choose files · expand folders and use checkboxes"), BorderLayout.NORTH)
+            add(JBScrollPane(tree), BorderLayout.CENTER)
+        }
+        wrapper.add(selection, BorderLayout.CENTER)
         return wrapper
     }
 
@@ -137,7 +169,8 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
                 val counts = catalog.files.groupingBy { it.category }.eachCount()
                 for ((category, box) in categoryBoxes) {
                     val n = counts[category] ?: 0
-                    box.text = "$category ($n)"
+                    box.text = "${category.replace('_', ' ')} ($n)"
+                    box.isVisible = n > 0
                     box.isSelected = if (!controller.state.filters.categoriesConstrained) {
                         n > 0
                     } else {
@@ -183,7 +216,7 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
                 treeRoot.add(newRoot.getChildAt(0) as CheckedTreeNode)
             }
             treeModel.reload()
-            expandFolders()
+            updateSummary()
         } finally {
             rebuilding = false
         }
@@ -193,12 +226,19 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
         if (field.text != value) field.text = value
     }
 
-    private fun expandFolders() {
-        var row = 0
-        while (row < tree.rowCount) {
-            tree.expandRow(row)
-            row++
+    private fun updateSummary() {
+        val catalog = controller.state.catalog
+        if (catalog == null) {
+            summaryLabel.text = "Scan this project to choose files for export."
+            exportButton.isEnabled = false
+            return
         }
+        val (included, oversized) = controller.state.visibleFiles()
+        val visible = (included + oversized).mapTo(HashSet()) { it.relPath }
+        val selected = controller.state.checked.count { it in visible }
+        summaryLabel.text = "<html>${catalog.files.size} files found · $selected selected<br>${oversized.size} large files start unchecked</html>"
+        exportButton.text = "3. Export $selected files"
+        exportButton.isEnabled = selected > 0
     }
 
     private data class FileRow(

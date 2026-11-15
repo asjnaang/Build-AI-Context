@@ -28,9 +28,9 @@ No Python install is required; VS Code already provides Node for the extension h
 
 1. Open a folder.
 2. Open the **AI Context** view in the Activity Bar.
-3. Run **Build AI Context: Scan**.
-4. Toggle categories or right-click a file **Add to AI Context**.
-5. Run **Build AI Context: Export**.
+3. In **1. Scan and select files**, click **Scan project**.
+4. Check the files you want. Open **Filters and options** only if you need to narrow by category, keyword, filename, or path. You can also right-click a file and choose **Add to AI Context**.
+5. Click the **Export** icon in the file section's title bar, or open **3. Export results** and click **Export selected files**.
 6. Open `prompt.md` (Agent Contract) and attach the bundles to your assistant.
 
 ## Mapping to `baic`
