@@ -94,6 +94,30 @@ export function sha256OfLines(lines: string[]): string {
   return createHash("sha256").update(lines.join("\n"), "utf8").digest("hex");
 }
 
+export function sha256OfBytes(data: Buffer): string {
+  return createHash("sha256").update(data).digest("hex");
+}
+
+function normalizeIncludeFormats(values: string[] | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const raw of values ?? []) {
+    let ext = raw.trim().toLowerCase();
+    if (!ext) continue;
+    ext = ext.replace(/^\*\./, "").replace(/^\./, "");
+    if (!ext.startsWith(".")) ext = `.${ext}`;
+    out.add(ext);
+  }
+  return out;
+}
+
+function matchesForcedPath(rel: string, forced: string[]): boolean {
+  const posix = posixRel(rel).replace(/\/$/, "");
+  return forced.some((requested) => {
+    const want = posixRel(requested).replace(/\/$/, "");
+    return posix === want || posix.startsWith(want + "/") || want.startsWith(posix + "/");
+  });
+}
+
 function walkFiles(root: string): string[] {
   const out: string[] = [];
   const stack = [root];
@@ -140,23 +164,31 @@ export async function scan(workspace: string, options: ScanOptions): Promise<Cat
   const bump = (reason: string) => {
     skipped[reason] = (skipped[reason] ?? 0) + 1;
   };
+  const forcedPaths = (options.forceIgnoredPaths ?? []).map((p) => posixRel(p));
+  const forcedFormats = normalizeIncludeFormats(options.forceIncludeFormats);
+  const excluded = (options.excludePaths ?? []).map((p) => posixRel(p).replace(/\/$/, "")).filter(Boolean);
 
   for (const abs of walkFiles(root)) {
     if (options.isCanceled?.()) throw new EngineCanceled();
     const rel = posixRel(relative(root, abs));
-    if (shouldSkipByDir(rel, policy.defaultExcludedDirs)) {
+    const forceThis = matchesForcedPath(rel, forcedPaths) && !rel.split("/").includes(".git");
+    if (excluded.some((ex) => rel === ex || rel.startsWith(ex + "/"))) {
+      bump("excluded_path");
+      continue;
+    }
+    if (shouldSkipByDir(rel, policy.defaultExcludedDirs) && !forceThis) {
       bump("default_excluded_dir");
       continue;
     }
-    if (shouldSkipByPrefix(rel, policy.defaultExcludedPrefixes)) {
+    if (shouldSkipByPrefix(rel, policy.defaultExcludedPrefixes) && !forceThis) {
       bump("default_excluded_prefix");
       continue;
     }
-    if (gitignore.ignores(rel)) {
+    if (gitignore.ignores(rel) && !forceThis) {
       bump(".gitignore");
       continue;
     }
-    if (pathMatchesAnyPattern(rel, policy.extraExcludedPatterns)) {
+    if (pathMatchesAnyPattern(rel, policy.extraExcludedPatterns) && !forceThis) {
       bump("extra_excluded_pattern");
       continue;
     }
@@ -164,28 +196,41 @@ export async function scan(workspace: string, options: ScanOptions): Promise<Cat
       bump("secret_like_file");
       continue;
     }
-    const category = detectCategory(abs);
-    if (!category) {
+    const suffix = extname(abs).toLowerCase();
+    const forceFormat = forcedFormats.has(suffix);
+    let category = detectCategory(abs);
+    if (!category && !forceFormat) {
       bump("unsupported_type");
       continue;
     }
-    if (isProbablyBinary(abs)) {
+    if (!category) category = "config_docs";
+    let snapshotBytes: Buffer;
+    let sizeBytes = 0;
+    let mode = 0o644;
+    try {
+      snapshotBytes = readFileSync(abs);
+      const st = statSync(abs);
+      sizeBytes = st.size;
+      mode = st.mode & 0o7777;
+    } catch {
+      bump("read_error");
+      continue;
+    }
+    const binary = forceFormat ? isProbablyBinary(abs) || suffix === ".sqlite3" : isProbablyBinary(abs);
+    if (binary && !forceFormat) {
       bump("binary");
       continue;
     }
-    let lines: string[];
-    try {
-      lines = readTextLines(abs);
-    } catch {
-      bump("read_error");
-      continue;
-    }
-    let sizeBytes = 0;
-    try {
-      sizeBytes = statSync(abs).size;
-    } catch {
-      bump("read_error");
-      continue;
+    let lines: string[] = [];
+    if (!binary) {
+      try {
+        lines = splitLines(decodeText(snapshotBytes));
+      } catch {
+        if (!forceFormat) {
+          bump("read_error");
+          continue;
+        }
+      }
     }
     files.push({
       absPath: resolve(abs),
@@ -193,8 +238,11 @@ export async function scan(workspace: string, options: ScanOptions): Promise<Cat
       category,
       lineCount: lines.length,
       sizeBytes,
-      sha256: sha256OfLines(lines),
+      sha256: sha256OfBytes(snapshotBytes),
       lines,
+      snapshotBytes,
+      mode: mode || 0o644,
+      encoding: binary ? "binary" : "text",
     });
   }
 

@@ -6,6 +6,33 @@ class HostState(
     val checked: MutableSet<String> = linkedSetOf(),
     var maxFileLines: Int = 3000,
 ) {
+    var searchQuery: String = ""
+    var formatFilter: String = ""
+
+    fun availableFormats(): List<String> = catalog?.files
+        ?.map { fileFormat(it.relPath) }?.distinct()?.sorted() ?: emptyList()
+
+    fun searchResults(): List<SourceFile> {
+        val catalog = this.catalog ?: return emptyList()
+        val query = searchQuery.trim().lowercase()
+        return select(catalog, filters).files.filter {
+            (query.isEmpty() || it.relPath.lowercase().contains(query) || it.category.lowercase().contains(query)) &&
+                (formatFilter.isEmpty() || fileFormat(it.relPath) == formatFilter)
+        }
+    }
+
+    fun selectAllResults(): Int {
+        var added = 0
+        for (file in searchResults()) if (checked.add(file.relPath)) added++
+        return added
+    }
+
+    private fun fileFormat(path: String): String {
+        val name = path.substringAfterLast('/')
+        val dot = name.lastIndexOf('.')
+        return if (dot <= 0) "(no extension)" else name.substring(dot).lowercase()
+    }
+
     fun applyScan(catalog: Catalog) {
         this.catalog = catalog
         val selected = select(catalog, filters)
@@ -17,7 +44,7 @@ class HostState(
     fun visibleFiles(): Pair<List<SourceFile>, List<SourceFile>> {
         val catalog = this.catalog ?: return emptyList<SourceFile>() to emptyList()
         val selected = select(catalog, filters)
-        return applyMaxFileLines(selected, maxFileLines)
+        return applyMaxFileLines(selected.copy(files = searchResults()), maxFileLines)
     }
 
     fun exportSelection(): Selection {
@@ -26,7 +53,7 @@ class HostState(
             SelectionMetadata("non_interactive", emptyList(), emptyList(), emptyList(), emptyList()),
         )
         val selected = select(catalog, filters)
-        return selected.copy(files = selected.files.filter { it.relPath in checked })
+        return selected.copy(files = searchResults().filter { it.relPath in checked })
     }
 
     fun toggleCategory(category: String) {
@@ -80,6 +107,8 @@ class HostState(
 
     fun clearFilters() {
         filters = Filters()
+        searchQuery = ""
+        formatFilter = ""
         catalog?.let { applyScan(it) }
     }
 

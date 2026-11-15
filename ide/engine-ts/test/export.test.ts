@@ -35,6 +35,7 @@ test("checked oversized file is written when skip is disabled", async () => {
         redact: false,
         projectOverview: false,
         updateGitignore: false,
+        transport: "text",
       },
     );
     const bundle = readFileSync(result.bundlePaths[0], "utf8");

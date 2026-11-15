@@ -46,6 +46,7 @@ test("export bundle body matches golden", async () => {
       redact: false,
       projectOverview: false,
       updateGitignore: false,
+      transport: "text",
     });
     const bundle = readFileSync(result.bundlePaths[0], "utf8");
     const expected = readFileSync(path.join(golden, "bundle.txt"), "utf8");

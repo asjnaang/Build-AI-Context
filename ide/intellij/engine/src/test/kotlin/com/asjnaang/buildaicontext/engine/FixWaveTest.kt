@@ -26,6 +26,7 @@ class FixWaveTest {
                 redact = false,
                 projectOverview = false,
                 updateGitignore = false,
+                transport = "text",
             ),
         )
         val bundle = Files.readString(Path.of(result.bundlePaths[0]))
@@ -47,6 +48,7 @@ class FixWaveTest {
                     redact = false,
                     projectOverview = false,
                     updateGitignore = true,
+                    transport = "text",
                     isCanceled = { true },
                 ),
             )
@@ -66,6 +68,7 @@ class FixWaveTest {
                 redact = false,
                 projectOverview = false,
                 updateGitignore = true,
+                transport = "text",
             ),
         )
         assertTrue(Files.exists(Path.of(result.bundlePaths[0])))
@@ -86,6 +89,7 @@ class FixWaveTest {
                 redact = false,
                 projectOverview = false,
                 updateGitignore = false,
+                transport = "text",
             ),
         )
         assertEquals(dir.resolve("nested-out").toString(), result.outputDir)
@@ -107,6 +111,7 @@ class FixWaveTest {
                 projectOverview = false,
                 updateGitignore = false,
                 includeSecretFiles = true,
+                transport = "text",
             ),
         )
         val manifest = Files.readString(Path.of(result.manifestPath))

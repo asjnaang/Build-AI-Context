@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, isAbsolute, join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { packChunks, renderChunkBlock, splitIntoChunks } from "./chunk.ts";
 import {
   extractTimestampFromDirName,
@@ -9,31 +9,16 @@ import {
 } from "./filetree.ts";
 import { generateGraph } from "./graph.ts";
 import { updateGitignore } from "./gitignore.ts";
+import { writeGzipExport, type GzipSource } from "./gzip.ts";
 import { writeProjectOverview } from "./overview.ts";
 import { loadPolicy } from "./policy.ts";
+import { assertTransport, promptContentForTransport, promptOutputName, setPromptDir } from "./prompt.ts";
 import { pathMatchesAnyPattern } from "./scan.ts";
 import { EngineCanceled, type Catalog, type ExportOptions, type ExportResult, type Selection } from "./types.ts";
 
-let promptPathOverride: string | undefined;
-
+export { setPromptDir };
 export function setPromptPath(path: string): void {
-  promptPathOverride = path;
-}
-
-function promptMd(): string {
-  const candidates = [
-    promptPathOverride,
-    join(process.cwd(), "prompt.md"),
-    join(process.cwd(), "ide", "engine-ts", "prompt.md"),
-  ].filter((p): p is string => Boolean(p));
-  for (const candidate of candidates) {
-    try {
-      return readFileSync(candidate, "utf8");
-    } catch {
-      /* try next */
-    }
-  }
-  return "";
+  setPromptDir(path.endsWith(".md") ? dirname(path) : path);
 }
 
 function throwIfCanceled(isCanceled?: () => boolean): void {
@@ -53,30 +38,126 @@ export async function exportCatalog(
   throwIfCanceled(options.isCanceled);
   const policy = loadPolicy();
   const root = catalog.workspace;
+  const transport = assertTransport(options.transport ?? "tar-gz");
+  if (transport === "tar-gz" && options.redact) {
+    throw new Error("--redact requires --transport text");
+  }
   const includeSecretFiles = options.includeSecretFiles === true;
   const files = includeSecretFiles
     ? selection.files
     : selection.files.filter((f) => !pathMatchesAnyPattern(f.relPath, policy.defaultSecretPatterns));
   const effective = { ...selection, files };
   const maxLines = policy.bundleMaxLines;
-  const { chunks, skipped: splitSkipped } = splitIntoChunks(
-    effective.files,
-    maxLines,
-    options.redact,
-    options.maxFileLines,
-  );
-  throwIfCanceled(options.isCanceled);
-  const warnings = splitSkipped.filter((item) => item.reason === "large_file_warning");
-  const skippedDuringSplit = splitSkipped.filter((item) => item.reason !== "large_file_warning");
-  const packed = packChunks(chunks, maxLines, options.redact);
-  const skippedDuringPack = [...skippedDuringSplit, ...packed.skipped];
-
+  const maxFileLines = options.forceBundle ? 0 : options.maxFileLines;
   const outDir = resolveOutputDir(root, options.outputDir);
   mkdirSync(outDir, { recursive: true });
   const timestamp = extractTimestampFromDirName(basename(outDir));
   const filetreeContent = generateFiletree(catalog.files, root);
   const folderName = basename(root).replaceAll(" ", "_");
   const filetreeName = `${folderName}_file_tree_${timestamp}.txt`;
+  const promptName = promptOutputName();
+  const promptPath = join(outDir, promptName);
+  writeFileSync(promptPath, promptContentForTransport(transport, options.task), "utf8");
+
+  if (transport === "tar-gz") {
+    throwIfCanceled(options.isCanceled);
+    const gzipSources: GzipSource[] = effective.files.map((file) => ({
+      relPath: file.relPath,
+      category: file.category,
+      sizeBytes: file.sizeBytes,
+      sha256: file.sha256,
+      data: file.snapshotBytes,
+      mode: file.mode || 0o644,
+      encoding: file.encoding,
+    }));
+    const gzip = writeGzipExport({
+      outputDir: outDir,
+      folderName,
+      timestamp,
+      sources: gzipSources,
+      split: options.split === true,
+    });
+    const warnings = effective.files
+      .filter((file) => options.maxFileLines > 0 && file.lineCount >= options.maxFileLines)
+      .map((file) => ({
+        path: file.relPath,
+        reason: "large_file_warning",
+        line_count: file.lineCount,
+        threshold: options.maxFileLines,
+      }));
+    const manifest: Record<string, unknown> = {
+      tool: "build-ai-context",
+      created_at_utc: new Date().toISOString(),
+      project_root: root,
+      max_lines_per_bundle: maxLines,
+      max_file_lines: maxFileLines,
+      bundle_count: 0,
+      skip_secret_like_files: !includeSecretFiles,
+      schema_version: gzip.reassembly.length ? 5 : options.split ? 4 : 3,
+      selection: {
+        selection_mode: selection.metadata.selectionMode,
+        selected_categories: selection.metadata.selectedCategories,
+        selected_paths: selection.metadata.selectedPaths,
+        name_filters: selection.metadata.nameFilters,
+        missing_paths: selection.metadata.missingPaths,
+      },
+      selected_files: effective.files.map((f) => f.relPath),
+      transported_files: gzip.logicalPaths,
+      filetree: filetreeName,
+      summary: {
+        selected_file_count: effective.files.length,
+        selected_total_lines: effective.files.reduce((n, f) => n + f.lineCount, 0),
+        selected_total_bytes: effective.files.reduce((n, f) => n + f.sizeBytes, 0),
+        transported_file_count: gzip.archiveEntries.length,
+        transported_total_bytes: gzip.archiveEntries.reduce((n, e) => n + Number(e.size_bytes), 0),
+        skipped_counts: catalog.skipped,
+        skipped_during_pack_count: 0,
+        warning_count: warnings.length,
+      },
+      skipped_during_pack: [],
+      warnings,
+      bundles: [],
+      payload_count: gzip.payloadRecords.length,
+      archive_entries: gzip.archiveEntries,
+      transport: {
+        format: "tar+gzip+base64",
+        split: options.split === true,
+        payload_count: gzip.payloadRecords.length,
+        payloads: gzip.payloadRecords,
+        deterministic: true,
+        reassembly: gzip.reassembly,
+        ...(options.split ? {} : Object.fromEntries(Object.entries(gzip.payloadRecords[0] ?? {}).filter(([key]) => !["part", "part_count", "entries"].includes(key)))),
+      },
+    };
+    const manifestName = `${folderName}_manifest_${timestamp}.json`;
+    const manifestPath = join(outDir, manifestName);
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n", "utf8");
+    throwIfCanceled(options.isCanceled);
+    if (options.updateGitignore) updateGitignore(root, filetreeName);
+    return {
+      outputDir: outDir,
+      manifestPath,
+      bundlePaths: gzip.payloadPaths,
+      filetreeEmbedded: true,
+      promptPath,
+      filesExported: gzip.logicalPaths.length,
+      bundlesCreated: gzip.payloadRecords.length,
+      warnings,
+      skippedDuringPack: [],
+    };
+  }
+
+  const { chunks, skipped: splitSkipped } = splitIntoChunks(
+    effective.files,
+    maxLines,
+    options.redact,
+    maxFileLines,
+  );
+  throwIfCanceled(options.isCanceled);
+  const warnings = splitSkipped.filter((item) => item.reason === "large_file_warning");
+  const skippedDuringSplit = splitSkipped.filter((item) => item.reason !== "large_file_warning");
+  const packed = packChunks(chunks, maxLines, options.redact);
+  const skippedDuringPack = [...skippedDuringSplit, ...packed.skipped];
 
   const sourceLookup = new Map(effective.files.map((s) => [s.relPath, s]));
   const manifest: Record<string, unknown> = {
@@ -108,9 +189,6 @@ export async function exportCatalog(
     warnings,
     bundles: [] as unknown[],
   };
-
-  const promptPath = join(outDir, "prompt.md");
-  writeFileSync(promptPath, promptMd(), "utf8");
 
   const bundlePaths: string[] = [];
   const exportedRels = new Set<string>();

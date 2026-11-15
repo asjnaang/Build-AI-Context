@@ -19,11 +19,102 @@ fun exportCatalog(catalog: Catalog, selection: Selection, options: ExportOptions
     }
     val effective = selection.copy(files = files)
     val maxLines = policy.bundleMaxLines
+    val maxFileLines = if (options.forceBundle) 0 else options.maxFileLines
+    val transport = if (options.transport == "text") "text" else "tar-gz"
+    if (transport == "tar-gz" && options.redact) {
+        throw IllegalArgumentException("--redact requires --transport text")
+    }
+    val outDirEarly = if (!options.outputDir.isNullOrBlank()) {
+        val requested = Path.of(options.outputDir)
+        if (requested.isAbsolute) requested else Path.of(root).resolve(requested)
+    } else {
+        Path.of(root).resolve(sanitizeOutputDirName(root))
+    }
+    Files.createDirectories(outDirEarly)
+    val timestampEarly = extractTimestampFromDirName(outDirEarly.fileName.toString())
+    val folderNameEarly = Path.of(root).fileName.toString().replace(" ", "_")
+    if (transport == "tar-gz") {
+        throwIfCanceled(options.isCanceled)
+        val promptPath = outDirEarly.resolve("baic_prompt.md")
+        Files.writeString(promptPath, loadPromptMd("tar-gz", options.task))
+        val gzipSources = effective.files.map {
+            GzipSource(
+                relPath = it.relPath,
+                category = it.category,
+                sizeBytes = it.sizeBytes,
+                sha256 = it.sha256,
+                data = if (it.snapshotBytes.isNotEmpty()) it.snapshotBytes else it.lines.joinToString("\n").toByteArray(),
+                mode = it.mode,
+                encoding = it.encoding,
+            )
+        }
+        val gzip = writeGzipExport(outDirEarly, folderNameEarly, timestampEarly, gzipSources)
+        val warnings = effective.files.filter { maxFileLines > 0 && it.lineCount >= options.maxFileLines }.map {
+            mapOf("path" to it.relPath, "reason" to "large_file_warning", "line_count" to it.lineCount, "threshold" to options.maxFileLines)
+        }
+        val firstPayload = gzip.payloadRecords.first()
+        val manifest = linkedMapOf<String, Any?>(
+            "tool" to "build-ai-context",
+            "created_at_utc" to Instant.now().toString(),
+            "project_root" to root,
+            "max_lines_per_bundle" to maxLines,
+            "max_file_lines" to maxFileLines,
+            "bundle_count" to 0,
+            "skip_secret_like_files" to !options.includeSecretFiles,
+            "schema_version" to 3,
+            "selection" to linkedMapOf(
+                "selection_mode" to selection.metadata.selectionMode,
+                "selected_categories" to selection.metadata.selectedCategories,
+                "selected_paths" to selection.metadata.selectedPaths,
+                "name_filters" to selection.metadata.nameFilters,
+                "missing_paths" to selection.metadata.missingPaths,
+            ),
+            "selected_files" to effective.files.map { it.relPath },
+            "transported_files" to gzip.logicalPaths,
+            "filetree" to "${folderNameEarly}_file_tree_$timestampEarly.txt",
+            "summary" to linkedMapOf(
+                "selected_file_count" to effective.files.size,
+                "selected_total_lines" to effective.files.sumOf { it.lineCount },
+                "selected_total_bytes" to effective.files.sumOf { it.sizeBytes },
+                "transported_file_count" to gzip.archiveEntries.size,
+                "skipped_counts" to catalog.skipped,
+                "skipped_during_pack_count" to 0,
+                "warning_count" to warnings.size,
+            ),
+            "skipped_during_pack" to emptyList<Any?>(),
+            "warnings" to warnings,
+            "bundles" to emptyList<Any?>(),
+            "payload_count" to gzip.payloadRecords.size,
+            "archive_entries" to gzip.archiveEntries,
+            "transport" to linkedMapOf(
+                "format" to "tar+gzip+base64",
+                "split" to options.split,
+                "payload_count" to gzip.payloadRecords.size,
+                "payloads" to gzip.payloadRecords,
+                "deterministic" to true,
+                "reassembly" to emptyList<Any?>(),
+            ) + firstPayload.filterKeys { it !in setOf("part", "part_count", "entries") },
+        )
+        val manifestPath = outDirEarly.resolve("${folderNameEarly}_manifest_$timestampEarly.json")
+        Files.writeString(manifestPath, Json.stringify(manifest) + "\n")
+        if (options.updateGitignore) updateGitignore(root, "${folderNameEarly}_file_tree_$timestampEarly.txt")
+        return ExportResult(
+            outputDir = outDirEarly.toString(),
+            manifestPath = manifestPath.toString(),
+            bundlePaths = gzip.payloadPaths,
+            filetreeEmbedded = true,
+            promptPath = promptPath.toString(),
+            filesExported = gzip.logicalPaths.size,
+            bundlesCreated = gzip.payloadRecords.size,
+            warnings = warnings,
+            skippedDuringPack = emptyList(),
+        )
+    }
     val (chunks, splitSkipped) = splitIntoChunks(
         effective.files,
         maxLines,
         options.redact,
-        options.maxFileLines,
+        maxFileLines,
     )
     throwIfCanceled(options.isCanceled)
     val warnings = splitSkipped.filter { it["reason"] == "large_file_warning" }
@@ -74,8 +165,8 @@ fun exportCatalog(catalog: Catalog, selection: Selection, options: ExportOptions
         "bundles" to ArrayList<Any?>(),
     )
 
-    val promptPath = outDir.resolve("prompt.md")
-    Files.writeString(promptPath, loadPromptMd())
+    val promptPath = outDir.resolve("baic_prompt.md")
+    Files.writeString(promptPath, loadPromptMd("text", options.task))
 
     val bundlePaths = ArrayList<String>()
     val exportedRels = LinkedHashSet<String>()

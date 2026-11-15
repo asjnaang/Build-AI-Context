@@ -203,6 +203,13 @@ export function select(catalog: Catalog, filters: Filters): Selection {
     selected = filterFilesByKeywords(selected, filters.keywords).matched;
   }
 
+  if (filters.excludePaths?.length) {
+    const excluded = filters.excludePaths.map((p) => posix(p).replace(/\/$/, "")).filter(Boolean);
+    selected = selected.filter(
+      (f) => !excluded.some((ex) => f.relPath === ex || f.relPath.startsWith(ex + "/")),
+    );
+  }
+
   selected.sort((a, b) => (a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0));
   const anyFilter = hasCat || constrainedEmpty || hasPath || hasName || hasKw;
   return {

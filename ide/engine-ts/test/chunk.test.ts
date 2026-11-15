@@ -41,6 +41,9 @@ test("default maxFileLines skips 3000-line files", () => {
     sizeBytes: 3000,
     sha256: "x",
     lines,
+    snapshotBytes: Buffer.from(lines.join("\n"), "utf8"),
+    mode: 0o644,
+    encoding: "text",
   };
   const skipped = splitIntoChunks([file], 8000, false, 3000);
   assert.equal(skipped.chunks.length, 0);

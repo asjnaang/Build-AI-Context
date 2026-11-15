@@ -29,7 +29,8 @@ tasks.processResources {
         include("policy.json")
     }
     from(rootProject.projectDir.resolve("../engine-ts")) {
-        include("prompt.md")
+        include("baic_prompt_text.md")
+        include("baic_prompt_gzip.md")
     }
 }
 

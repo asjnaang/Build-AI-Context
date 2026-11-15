@@ -64,6 +64,20 @@ fun sha256OfLines(lines: List<String>): String {
     return digest.digest().joinToString("") { b -> "%02x".format(b) }
 }
 
+fun sha256OfBytes(data: ByteArray): String {
+    val digest = MessageDigest.getInstance("SHA-256").digest(data)
+    return digest.joinToString("") { b -> "%02x".format(b) }
+}
+
+fun matchesForcedPath(rel: String, forced: List<String>): Boolean {
+    val posix = rel.replace('\\', '/').trimEnd('/')
+    if (posix.isEmpty()) return false
+    return forced.any { raw ->
+        val want = raw.replace('\\', '/').trim().trimEnd('/')
+        want.isNotEmpty() && (posix == want || posix.startsWith("$want/") || want.startsWith("$posix/"))
+    }
+}
+
 fun scan(workspace: String, options: ScanOptions = ScanOptions()): Catalog {
     val policy = loadPolicy()
     val root = Path.of(workspace).toAbsolutePath().normalize()
@@ -77,19 +91,28 @@ fun scan(workspace: String, options: ScanOptions = ScanOptions()): Catalog {
     for (abs in walkFiles(root)) {
         if (options.isCanceled()) throw EngineCanceled()
         val rel = posixRel(root, abs)
-        if (shouldSkipByDir(rel, policy.defaultExcludedDirs)) {
+        val forceThis = matchesForcedPath(rel, options.forceIgnoredPaths) && ".git" !in rel.split('/')
+        if (options.excludePaths.any { ex ->
+                val want = ex.trim().trimEnd('/')
+                want.isNotEmpty() && (rel == want || rel.startsWith("$want/"))
+            }
+        ) {
+            bump("excluded_path")
+            continue
+        }
+        if (shouldSkipByDir(rel, policy.defaultExcludedDirs) && !forceThis) {
             bump("default_excluded_dir")
             continue
         }
-        if (shouldSkipByPrefix(rel, policy.defaultExcludedPrefixes)) {
+        if (shouldSkipByPrefix(rel, policy.defaultExcludedPrefixes) && !forceThis) {
             bump("default_excluded_prefix")
             continue
         }
-        if (gitignore.ignores(rel)) {
+        if (gitignore.ignores(rel) && !forceThis) {
             bump(".gitignore")
             continue
         }
-        if (pathMatchesAnyPattern(rel, policy.extraExcludedPatterns)) {
+        if (pathMatchesAnyPattern(rel, policy.extraExcludedPatterns) && !forceThis) {
             bump("extra_excluded_pattern")
             continue
         }
@@ -97,27 +120,39 @@ fun scan(workspace: String, options: ScanOptions = ScanOptions()): Catalog {
             bump("secret_like_file")
             continue
         }
-        val category = detectCategory(abs.toString())
-        if (category == null) {
+        val suffix = suffixOf(abs.fileName.toString())
+        val forceFormat = options.forceIncludeFormats.any {
+            val ext = it.trim().lowercase().removePrefix("*").let { e -> if (e.startsWith(".")) e else ".$e" }
+            ext == suffix
+        }
+        var category = detectCategory(abs.toString())
+        if (category == null && !forceFormat) {
             bump("unsupported_type")
             continue
         }
-        if (isProbablyBinary(abs)) {
+        if (category == null) category = "config_docs"
+        val snapshotBytes = try {
+            Files.readAllBytes(abs)
+        } catch (_: Exception) {
+            bump("read_error")
+            continue
+        }
+        val binary = if (forceFormat) isProbablyBinary(abs) || suffix == ".sqlite3" else isProbablyBinary(abs)
+        if (binary && !forceFormat) {
             bump("binary")
             continue
         }
-        val lines = try {
+        val lines = if (binary) emptyList() else try {
             readTextLines(abs)
         } catch (_: Exception) {
-            bump("read_error")
-            continue
+            if (!forceFormat) {
+                bump("read_error")
+                continue
+            }
+            emptyList()
         }
-        val sizeBytes = try {
-            Files.size(abs)
-        } catch (_: Exception) {
-            bump("read_error")
-            continue
-        }
+        val sizeBytes = snapshotBytes.size.toLong()
+        val mode = 420
         files.add(
             SourceFile(
                 absPath = abs.toAbsolutePath().normalize().toString(),
@@ -125,8 +160,11 @@ fun scan(workspace: String, options: ScanOptions = ScanOptions()): Catalog {
                 category = category,
                 lineCount = lines.size,
                 sizeBytes = sizeBytes,
-                sha256 = sha256OfLines(lines),
+                sha256 = sha256OfBytes(snapshotBytes),
                 lines = lines,
+                snapshotBytes = snapshotBytes,
+                mode = mode,
+                encoding = if (binary) "binary" else "text",
             ),
         )
     }
