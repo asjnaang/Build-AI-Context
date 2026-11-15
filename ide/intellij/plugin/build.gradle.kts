@@ -45,7 +45,16 @@ intellijPlatform {
         id = "com.asjnaang.buildaicontext"
         name = "Build AI Context"
         version.set(providers.gradleProperty("version"))
-        description.set("Choose files and options, then Export. gzip default matches the CLI. No Python required.")
+        description.set(
+            """
+            Export files as AI-readable text bundles.
+            <p>Choose files in the AI Context tool window, then Export. Cataloging is automatic. No Python required.</p>
+            <p>gzip (tar-gz) is the default, matching the <code>baic</code> CLI. Export writes bundles, a manifest, and
+            <code>baic_prompt.md</code>. Restore unpacks a gzip export.</p>
+            <p>Works on IntelliJ IDEA, Android Studio, WebStorm, PyCharm, and other IntelliJ Platform IDEs
+            (depends on <code>com.intellij.modules.platform</code> only). The plugin does not upload your code.</p>
+            """.trimIndent(),
+        )
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
             untilBuild = provider { null }
@@ -56,7 +65,9 @@ intellijPlatform {
         }
         changeNotes.set(
             """
-            <p>0.1.0 — Export-first Host: catalog loads with the project, gzip default, Restore.</p>
+            <p>0.1.0 — Export-first Host: catalog loads with the project, search and file-format
+            filters, gzip default, Restore, Add to AI Context, Generate Filetree / Code Graph.
+            Secrets require a confirm dialog.</p>
             """.trimIndent(),
         )
     }

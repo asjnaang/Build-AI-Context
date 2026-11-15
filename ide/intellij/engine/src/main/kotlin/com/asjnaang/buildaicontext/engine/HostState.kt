@@ -21,10 +21,23 @@ class HostState(
         }
     }
 
-    fun selectAllResults(): Int {
-        var added = 0
-        for (file in searchResults()) if (checked.add(file.relPath)) added++
-        return added
+    fun selectAllResults(): Int = setResultsChecked(true)
+
+    fun setResultsChecked(select: Boolean): Int {
+        var changed = 0
+        for (file in searchResults()) {
+            if (select) {
+                if (checked.add(file.relPath)) changed++
+            } else if (checked.remove(file.relPath)) {
+                changed++
+            }
+        }
+        return changed
+    }
+
+    fun allResultsChecked(): Boolean {
+        val results = searchResults()
+        return results.isNotEmpty() && results.all { it.relPath in checked }
     }
 
     private fun fileFormat(path: String): String {

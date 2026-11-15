@@ -47,14 +47,22 @@ export function searchResults(state: HostState): SourceFile[] {
 }
 
 export function selectSearchResults(state: HostState): number {
-  let added = 0;
+  return setSearchResultsChecked(state, true);
+}
+
+export function setSearchResultsChecked(state: HostState, checked: boolean): number {
+  let changed = 0;
   for (const file of searchResults(state)) {
-    if (!state.checked.has(file.relPath)) {
-      state.checked.add(file.relPath);
-      added++;
+    if (checked) {
+      if (!state.checked.has(file.relPath)) {
+        state.checked.add(file.relPath);
+        changed++;
+      }
+    } else if (state.checked.delete(file.relPath)) {
+      changed++;
     }
   }
-  return added;
+  return changed;
 }
 
 export function selectionFiles(state: HostState): SourceFile[] {

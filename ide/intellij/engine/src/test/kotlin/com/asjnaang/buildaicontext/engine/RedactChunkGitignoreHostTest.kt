@@ -148,4 +148,18 @@ class HostStateTest {
         assertTrue(included.any { it.relPath == "small.py" })
         assertTrue(oversized.any { it.relPath == "big.py" })
     }
+
+    @Test
+    fun selectAllThenClearVisibleResults() {
+        val catalog = scan(smallPyWorkspace().toString(), ScanOptions(includeSecretFiles = false))
+        val state = HostState()
+        state.applyScan(catalog)
+        assertTrue(state.allResultsChecked())
+        state.setResultsChecked(false)
+        assertFalse(state.allResultsChecked())
+        assertEquals(0, state.exportSelection().files.size)
+        state.setResultsChecked(true)
+        assertTrue(state.allResultsChecked())
+        assertTrue(state.exportSelection().files.isNotEmpty())
+    }
 }

@@ -177,6 +177,13 @@ class BaicController(private val project: Project) {
         lastExport?.let { RevealFileAction.openFile(File(it.outputDir)) }
     }
 
+    fun openLastPrompt() {
+        lastExport?.let {
+            val vf = LocalFileSystem.getInstance().refreshAndFindFileByPath(it.promptPath)
+            if (vf != null) FileEditorManager.getInstance(project).openFile(vf, true)
+        }
+    }
+
     fun generateFiletree() {
         val catalog = state.catalog ?: run {
             scanProject()
