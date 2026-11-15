@@ -1,5 +1,6 @@
 import type { Catalog, ExportResult, Filters, SourceFile } from "../../engine-ts/src/types.ts";
 import { applyMaxFileLines, select } from "../../engine-ts/src/select.ts";
+import { extname } from "node:path";
 
 export interface HostState {
   catalog?: Catalog;
@@ -11,6 +12,8 @@ export interface HostState {
   manifestPath?: string;
   graphPath?: string;
   maxFileLines: number;
+  searchQuery: string;
+  formatFilter: string;
 }
 
 export type FileTreeEntry =
@@ -22,13 +25,41 @@ export function emptyFilters(): Filters {
 }
 
 export function createState(maxFileLines = 3000): HostState {
-  return { filters: emptyFilters(), checked: new Set(), maxFileLines };
+  return { filters: emptyFilters(), checked: new Set(), maxFileLines, searchQuery: "", formatFilter: "" };
+}
+
+export function fileFormat(relPath: string): string {
+  return extname(relPath).toLowerCase() || "(no extension)";
+}
+
+export function availableFormats(state: HostState): string[] {
+  if (!state.catalog) return [];
+  return [...new Set(state.catalog.files.map((f) => fileFormat(f.relPath)))].sort();
+}
+
+export function searchResults(state: HostState): SourceFile[] {
+  if (!state.catalog) return [];
+  const query = state.searchQuery.trim().toLowerCase();
+  return select(state.catalog, state.filters).files.filter((file) =>
+    (!query || file.relPath.toLowerCase().includes(query) || file.category.toLowerCase().includes(query)) &&
+    (!state.formatFilter || fileFormat(file.relPath) === state.formatFilter),
+  );
+}
+
+export function selectSearchResults(state: HostState): number {
+  let added = 0;
+  for (const file of searchResults(state)) {
+    if (!state.checked.has(file.relPath)) {
+      state.checked.add(file.relPath);
+      added++;
+    }
+  }
+  return added;
 }
 
 export function selectionFiles(state: HostState): SourceFile[] {
   if (!state.catalog) return [];
-  const selected = select(state.catalog, state.filters);
-  const { included, oversized } = applyMaxFileLines(selected, state.maxFileLines);
+  const { included, oversized } = applyMaxFileLines({ files: searchResults(state), metadata: select(state.catalog, state.filters).metadata }, state.maxFileLines);
   return [
     ...included.filter((f) => state.checked.has(f.relPath)),
     ...oversized.filter((f) => state.checked.has(f.relPath)),
@@ -105,8 +136,10 @@ export function recordExport(state: HostState, result: ExportResult): void {
 
 export function visibleFileTree(state: HostState): FileTreeEntry[] {
   if (!state.catalog) return [];
-  const selected = select(state.catalog, state.filters);
-  const { included, oversized } = applyMaxFileLines(selected, state.maxFileLines);
+  const { included, oversized } = applyMaxFileLines(
+    { files: searchResults(state), metadata: select(state.catalog, state.filters).metadata },
+    state.maxFileLines,
+  );
   const oversizedSet = new Set(oversized.map((f) => f.relPath));
   const files = [...included, ...oversized].sort((a, b) => (a.relPath < b.relPath ? -1 : 1));
 

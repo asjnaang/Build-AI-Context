@@ -29,15 +29,14 @@ No Python, Node, or separate JRE is required beyond the IDE itself.
 
 ## Use
 
-1. Open a project.
+1. Open a project. The catalog loads with it.
 2. Open the **AI Context** tool window (right side).
-3. Click **1. Scan project** at the top of the tool window.
-4. Expand folders and check the files you want. Click **Show filters** only if you need categories, keywords, filenames, or paths. You can also right-click a file and choose **Add to AI Context**.
-5. Click **3. Export selected files**.
-6. Open `prompt.md` (Agent Contract) and attach the bundles to your assistant.
+3. Search file names, paths, or categories; choose a file format to narrow the results; then **Select all results** or check individual files. **Show options** has content keywords, explicit paths, ignored paths, and split.
+4. Click **Export**. Only checked files in the current results are exported. gzip is the default and writes `baic_prompt.md`.
+5. **Restore gzip** unpacks a previous export.
 
 ## Mapping to `baic`
 
-This Host covers the same workflow as the `baic` CLI: scan, filter (category / path / keyword), redact, secret skip, oversized-file handling, filetree, code graph, and project overview.
+This Host covers the same workflow as the `baic` CLI: catalog, search and file-format filtering, selection by category / path / content keyword, gzip or text transport, restore, redact, secret skip, oversized-file handling, filetree, code graph, and project overview.
 
-Settings live under **Settings → Tools → Build AI Context** (max file lines, output directory, redact, secret-like files, project overview, write graph, update `.gitignore`).
+Settings live under **Settings → Tools → Build AI Context** (transport, output directory, force-bundle, exclude paths, update `.gitignore`, and the rest).

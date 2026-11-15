@@ -6,7 +6,9 @@ import com.asjnaang.buildaicontext.engine.ExportOptions
 import com.asjnaang.buildaicontext.engine.ExportResult
 import com.asjnaang.buildaicontext.engine.HostState
 import com.asjnaang.buildaicontext.engine.ScanOptions
+import com.asjnaang.buildaicontext.engine.RestoreError
 import com.asjnaang.buildaicontext.engine.exportCatalog
+import com.asjnaang.buildaicontext.engine.restoreExport
 import com.asjnaang.buildaicontext.engine.scan
 import com.asjnaang.buildaicontext.engine.writeStandaloneFiletree
 import com.asjnaang.buildaicontext.engine.writeStandaloneGraph
@@ -16,6 +18,8 @@ import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
@@ -30,7 +34,11 @@ import java.util.concurrent.CopyOnWriteArrayList
 @Service(Service.Level.PROJECT)
 class BaicController(private val project: Project) {
     val state = HostState()
+    @Volatile var lastExport: ExportResult? = null
+        private set
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
+    @Volatile private var exportWhenReady = false
+    @Volatile private var scanning = false
 
     fun addListener(listener: () -> Unit) {
         listeners.add(listener)
@@ -44,27 +52,55 @@ class BaicController(private val project: Project) {
 
     fun workspacePath(): String? = project.basePath
 
-    fun scanProject() {
+    fun scanProject(thenExport: Boolean = false) {
         val root = workspacePath() ?: return
+        synchronized(this) {
+            if (thenExport) exportWhenReady = true
+            if (scanning) return
+            scanning = true
+        }
         val settings = BaicSettings.getInstance().state
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Build AI Context: Scan", true) {
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Build AI Context: Catalog", true) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.isIndeterminate = true
-                indicator.text = "Scanning project…"
+                indicator.text = "Loading catalog…"
                 try {
                     val catalog = scan(
                         root,
                         ScanOptions(
                             includeSecretFiles = settings.includeSecretFiles,
+                            forceIgnoredPaths = if (settings.forceIgnored) state.filters.paths.toList() else emptyList(),
+                            forceIncludeFormats = settings.forceIncludeFormats.split(',', ';', ' ').map { it.trim() }.filter { it.isNotEmpty() },
+                            excludePaths = settings.excludePaths.split(',', ';').map { it.trim() }.filter { it.isNotEmpty() },
                             isCanceled = { indicator.isCanceled },
                         ),
                     )
                     if (indicator.isCanceled) return
                     state.maxFileLines = settings.maxFileLines
                     state.applyScan(catalog)
+                    val shouldExport = synchronized(this@BaicController) {
+                        scanning = false
+                        val queued = exportWhenReady
+                        exportWhenReady = false
+                        queued
+                    }
                     notifyChanged()
+                    if (shouldExport) {
+                        ApplicationManager.getApplication().invokeLater { exportSelection() }
+                    }
                 } catch (_: EngineCanceled) {
-                    return
+                    synchronized(this@BaicController) {
+                        scanning = false
+                        exportWhenReady = false
+                    }
+                } catch (err: Exception) {
+                    synchronized(this@BaicController) {
+                        scanning = false
+                        exportWhenReady = false
+                    }
+                    ApplicationManager.getApplication().invokeLater {
+                        Messages.showErrorDialog(project, err.message ?: err.toString(), "Catalog failed")
+                    }
                 }
             }
         })
@@ -72,7 +108,7 @@ class BaicController(private val project: Project) {
 
     fun exportSelection() {
         val catalog: Catalog = state.catalog ?: run {
-            Messages.showWarningDialog(project, "Scan the project first.", "Build AI Context")
+            scanProject(thenExport = true)
             return
         }
         val selection = state.exportSelection()
@@ -81,6 +117,14 @@ class BaicController(private val project: Project) {
             return
         }
         val settings = BaicSettings.getInstance().state
+        if (settings.transport == "text" && settings.forceIncludeFormats.isNotBlank()) {
+            Messages.showWarningDialog(project, "Extra formats require gzip transport.", "Build AI Context")
+            return
+        }
+        if (settings.transport != "text" && settings.redact) {
+            Messages.showWarningDialog(project, "Redaction requires text transport.", "Build AI Context")
+            return
+        }
         state.maxFileLines = settings.maxFileLines
         var includeSecretFiles = settings.includeSecretFiles
         if (includeSecretFiles && !confirmSecrets()) includeSecretFiles = false
@@ -96,19 +140,29 @@ class BaicController(private val project: Project) {
                         selection,
                         ExportOptions(
                             outputDir = output,
-                            maxFileLines = state.exportMaxFileLines(),
+                            maxFileLines = if (settings.forceBundle) 0 else state.exportMaxFileLines(),
                             redact = settings.redact,
                             projectOverview = settings.projectOverview,
                             writeGraph = graph,
                             updateGitignore = settings.updateGitignore,
                             includeSecretFiles = includeSecretFiles,
+                            transport = settings.transport.ifBlank { "tar-gz" },
+                            forceBundle = settings.forceBundle,
+                            split = settings.split,
+                            task = settings.task.trim().ifEmpty { null },
                             isCanceled = { indicator.isCanceled },
                         ),
                     )
                     if (indicator.isCanceled) return
+                    lastExport = result
+                    notifyChanged()
                     notifyExport(result)
                 } catch (_: EngineCanceled) {
                     return
+                } catch (err: Exception) {
+                    ApplicationManager.getApplication().invokeLater {
+                        Messages.showErrorDialog(project, err.message ?: err.toString(), "Export failed")
+                    }
                 }
             }
         })
@@ -119,9 +173,13 @@ class BaicController(private val project: Project) {
         notifyChanged()
     }
 
+    fun openLastExport() {
+        lastExport?.let { RevealFileAction.openFile(File(it.outputDir)) }
+    }
+
     fun generateFiletree() {
         val catalog = state.catalog ?: run {
-            Messages.showWarningDialog(project, "Scan the project first.", "Build AI Context")
+            scanProject()
             return
         }
         val settings = BaicSettings.getInstance().state
@@ -131,13 +189,40 @@ class BaicController(private val project: Project) {
 
     fun generateGraph() {
         val catalog = state.catalog ?: run {
-            Messages.showWarningDialog(project, "Scan the project first.", "Build AI Context")
+            scanProject()
             return
         }
         val settings = BaicSettings.getInstance().state
         val format = if (settings.writeGraph == "json") "json" else "txt"
         val path = writeStandaloneGraph(catalog, format, settings.updateGitignore)
         notifyPath("Code graph written", path)
+    }
+
+    fun restoreFromDisk() {
+        val source = FileChooser.chooseFile(
+            FileChooserDescriptorFactory.createSingleFolderDescriptor().apply {
+                title = "Select a gzip export folder"
+                description = "Folder with the manifest and payload"
+            },
+            project,
+            null,
+        ) ?: return
+        val dest = FileChooser.chooseFile(
+            FileChooserDescriptorFactory.createSingleFolderDescriptor().apply {
+                title = "Select restore destination"
+                description = "Empty folder to unpack sources into"
+            },
+            project,
+            null,
+        ) ?: return
+        try {
+            val (path, count) = restoreExport(Path.of(source.path), Path.of(dest.path), false)
+            notifyPath("Restored $count file(s)", path.toString())
+        } catch (err: RestoreError) {
+            Messages.showErrorDialog(project, err.message, "Restore failed")
+        } catch (err: Exception) {
+            Messages.showErrorDialog(project, err.message ?: err.toString(), "Restore failed")
+        }
     }
 
     fun addPath(absPath: String) {

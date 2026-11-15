@@ -4,10 +4,12 @@ import { scan } from "../../engine-ts/src/scan.ts";
 import { select } from "../../engine-ts/src/select.ts";
 import { EngineCanceled } from "../../engine-ts/src/types.ts";
 import { exportCatalog, writeStandaloneFiletree, writeStandaloneGraph } from "../../engine-ts/src/write.ts";
+import { restoreExport, RestoreError } from "../../engine-ts/src/gzip.ts";
 import { setPolicyPath } from "../../engine-ts/src/policy.ts";
-import { setPromptPath } from "../../engine-ts/src/write.ts";
+import { setPromptDir } from "../../engine-ts/src/prompt.ts";
 import {
   addPath,
+  availableFormats,
   applyScan,
   categoryChecked,
   createState,
@@ -15,6 +17,8 @@ import {
   exportMaxFileLines,
   recordExport,
   selectionFiles,
+  searchResults,
+  selectSearchResults,
   setNameFilters,
   setPathFilters,
   toggleCategory,
@@ -57,6 +61,25 @@ class FileNode extends vscode.TreeItem {
   }
 }
 
+class ExportActionItem extends vscode.TreeItem {
+  constructor(count: number, transport: string) {
+    super(`Export ${count} files`, vscode.TreeItemCollapsibleState.None);
+    this.description = transport === "tar-gz" ? "gzip package" : "readable text";
+    this.iconPath = new vscode.ThemeIcon("export");
+    this.tooltip = "Write selected files, manifest, and baic_prompt.md";
+    this.command = { command: "baic.export", title: "Export selected files" };
+  }
+}
+
+class FileActionItem extends vscode.TreeItem {
+  constructor(label: string, description: string, icon: string, command: string) {
+    super(label, vscode.TreeItemCollapsibleState.None);
+    this.description = description;
+    this.iconPath = new vscode.ThemeIcon(icon);
+    this.command = { command, title: label };
+  }
+}
+
 class ArtifactItem extends vscode.TreeItem {
   constructor(label: string, uri: vscode.Uri) {
     super(label, vscode.TreeItemCollapsibleState.None);
@@ -71,7 +94,7 @@ function cfg() {
 
 export function activate(context: vscode.ExtensionContext): void {
   setPolicyPath(join(context.extensionPath, "resources", "policy.json"));
-  setPromptPath(join(context.extensionPath, "resources", "prompt.md"));
+  setPromptDir(join(context.extensionPath, "resources"));
 
   const state: HostState = createState();
 
@@ -103,6 +126,18 @@ export function activate(context: vscode.ExtensionContext): void {
       const secrets = cfg().get<boolean>("includeSecretFiles") ? "on" : "off";
       const overview = cfg().get<boolean>("projectOverview") ? "on" : "off";
       const graph = cfg().get<string>("writeGraph") ?? "off";
+      const transport = cfg().get<string>("transport") ?? "tar-gz";
+      const forceBundle = cfg().get<boolean>("forceBundle") ? "on" : "off";
+      const forceIgnored = cfg().get<boolean>("forceIgnored") ? "on" : "off";
+      const split = cfg().get<boolean>("split") ? "on" : "off";
+      const exclude = cfg().get<string>("excludePaths")?.trim() || "(none)";
+      const formats = cfg().get<string>("forceIncludeFormats")?.trim() || "(none)";
+      rows.push(new FilterItem(`Transport: ${transport}`, "transport", "baic.cycleTransport"));
+      rows.push(new FilterItem(`Force bundle: ${forceBundle}`, "forceBundle", "baic.toggleForceBundle"));
+      rows.push(new FilterItem(`Force ignored: ${forceIgnored}`, "forceIgnored", "baic.toggleForceIgnored"));
+      rows.push(new FilterItem(`Split gzip: ${split}`, "split", "baic.toggleSplit"));
+      rows.push(new FilterItem(`Exclude paths: ${exclude}`, "excludePaths", "baic.setExcludePaths"));
+      rows.push(new FilterItem(`Force include formats: ${formats}`, "forceInclude", "baic.setForceIncludeFormats"));
       rows.push(new FilterItem(`Keyword: ${keyword}`, "keyword", "baic.setKeyword"));
       rows.push(new FilterItem(`Filename: ${name}`, "name", "baic.setNameFilter"));
       rows.push(new FilterItem(`Paths: ${paths}`, "paths", "baic.setPathFilter"));
@@ -114,19 +149,28 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   })();
 
-  const filesTree = new (class implements vscode.TreeDataProvider<FileNode> {
-    private _onDidChangeTreeData = new vscode.EventEmitter<FileNode | void>();
+  const filesTree = new (class implements vscode.TreeDataProvider<vscode.TreeItem> {
+    private _onDidChangeTreeData = new vscode.EventEmitter<vscode.TreeItem | void>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
     refresh() {
       this._onDidChangeTreeData.fire();
     }
-    getTreeItem(el: FileNode) {
+    getTreeItem(el: vscode.TreeItem) {
       return el;
     }
-    getChildren(el?: FileNode): FileNode[] {
+    getChildren(el?: vscode.TreeItem): vscode.TreeItem[] {
       if (!state.catalog) return [];
+      if (el && !(el instanceof FileNode)) return [];
       const nodes = el ? (el.entry.kind === "dir" ? el.entry.children : []) : visibleFileTree(state);
-      return nodes.map((entry) => new FileNode(entry));
+      const files = nodes.map((entry) => new FileNode(entry));
+      if (el) return files;
+      return [
+        new FileActionItem("Search files…", state.searchQuery || "all files", "search", "baic.searchFiles"),
+        new FileActionItem("File format", state.formatFilter || "All formats", "filter", "baic.chooseFormat"),
+        new FileActionItem("Select all results", `${searchResults(state).length} matching`, "check-all", "baic.selectSearchResults"),
+        new ExportActionItem(selectionFiles(state).length, cfg().get<string>("transport") ?? "tar-gz"),
+        ...files,
+      ];
     }
   })();
 
@@ -152,12 +196,12 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   })();
 
-  let filesView: vscode.TreeView<FileNode>;
+  let filesView: vscode.TreeView<vscode.TreeItem>;
   const updateFilesMessage = () => {
     if (!filesView) return;
     filesView.message = state.catalog
-      ? `${state.catalog.files.length} files found · ${selectionFiles(state).length} selected. Use checkboxes, then click Export in this view's title bar.`
-      : undefined;
+      ? `${searchResults(state).length} results · ${selectionFiles(state).length} selected · ${cfg().get<string>("transport") ?? "tar-gz"}. Export uses these results.`
+      : "Open a trusted folder; the catalog loads automatically.";
   };
   const refreshAll = () => {
     filtersTree.refresh();
@@ -181,20 +225,37 @@ export function activate(context: vscode.ExtensionContext): void {
     state.maxFileLines = cfg().get<number>("maxFileLines") ?? 3000;
   };
 
-  const scanCmd = async () => {
+  const csv = (raw: string | undefined) =>
+    (raw ?? "")
+      .split(/[,;\s]+/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+
+  const scanOptions = () => ({
+    includeSecretFiles: cfg().get<boolean>("includeSecretFiles") ?? false,
+    forceIgnoredPaths: cfg().get<boolean>("forceIgnored") ? state.filters.paths : [],
+    forceIncludeFormats: csv(cfg().get<string>("forceIncludeFormats")),
+    excludePaths: csv(cfg().get<string>("excludePaths")),
+  });
+
+  const scanCmd = async (quiet = false) => {
     if (!requireTrusted()) return;
     const root = workspaceRoot();
     if (!root) {
-      vscode.window.showWarningMessage("Open a folder first.");
+      if (!quiet) vscode.window.showWarningMessage("Open a folder first.");
       return;
     }
     readMaxFileLines();
     await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: "Scanning workspace", cancellable: true },
+      {
+        location: quiet ? vscode.ProgressLocation.Window : vscode.ProgressLocation.Notification,
+        title: "Cataloging workspace",
+        cancellable: true,
+      },
       async (_p, token) => {
         try {
           const catalog = await scan(root, {
-            includeSecretFiles: cfg().get<boolean>("includeSecretFiles") ?? false,
+            ...scanOptions(),
             isCanceled: () => token.isCancellationRequested,
           });
           if (token.isCancellationRequested) return;
@@ -211,8 +272,13 @@ export function activate(context: vscode.ExtensionContext): void {
   const exportCmd = async () => {
     if (!requireTrusted()) return;
     const root = workspaceRoot();
-    if (!root || !state.catalog) {
-      vscode.window.showWarningMessage("Scan the workspace first.");
+    if (!root) {
+      vscode.window.showWarningMessage("Open a folder first.");
+      return;
+    }
+    if (!state.catalog) await scanCmd(true);
+    if (!state.catalog) {
+      vscode.window.showWarningMessage("No catalog for this folder.");
       return;
     }
     readMaxFileLines();
@@ -231,21 +297,37 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
     const writeGraph = cfg().get<string>("writeGraph") ?? "off";
+    const transport = (cfg().get<string>("transport") ?? "tar-gz") as "tar-gz" | "text";
+    const forceBundle = cfg().get<boolean>("forceBundle") ?? false;
+    const split = cfg().get<boolean>("split") ?? false;
+    const task = cfg().get<string>("task")?.trim() || undefined;
+    if (transport !== "tar-gz" && csv(cfg().get<string>("forceIncludeFormats")).length) {
+      vscode.window.showWarningMessage("Force include formats requires gzip transport.");
+      return;
+    }
+    if (transport === "tar-gz" && (cfg().get<boolean>("redact") ?? false)) {
+      vscode.window.showWarningMessage("Redact requires text transport.");
+      return;
+    }
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: "Exporting AI context", cancellable: true },
       async (_p, token) => {
         try {
           const result = await exportCatalog(
             state.catalog!,
-            { files, metadata: select(state.catalog!, state.filters).metadata },
+            { files, metadata: select(state.catalog!, { ...state.filters, excludePaths: csv(cfg().get<string>("excludePaths")) }).metadata },
             {
               outputDir: cfg().get<string>("outputDir") || undefined,
-              maxFileLines: exportMaxFileLines(state),
+              maxFileLines: forceBundle ? 0 : exportMaxFileLines(state),
               redact: cfg().get<boolean>("redact") ?? false,
               projectOverview: cfg().get<boolean>("projectOverview") ?? false,
               writeGraph: writeGraph === "off" ? undefined : (writeGraph as "txt" | "json"),
               updateGitignore: cfg().get<boolean>("updateGitignore") ?? true,
               includeSecretFiles,
+              transport,
+              forceBundle,
+              split,
+              task,
               isCanceled: () => token.isCancellationRequested,
             },
           );
@@ -280,7 +362,7 @@ export function activate(context: vscode.ExtensionContext): void {
   updateFilesMessage();
   filesView.onDidChangeCheckboxState((e) => {
     for (const [item, box] of e.items) {
-      if (item.entry.kind !== "file") continue;
+      if (!(item instanceof FileNode) || item.entry.kind !== "file") continue;
       if (box === vscode.TreeItemCheckboxState.Checked) state.checked.add(item.entry.relPath);
       else state.checked.delete(item.entry.relPath);
     }
@@ -298,8 +380,83 @@ export function activate(context: vscode.ExtensionContext): void {
     filesView,
     vscode.window.registerTreeDataProvider("baic.filters", filtersTree),
     vscode.window.registerTreeDataProvider("baic.export", exportTree),
-    vscode.commands.registerCommand("baic.scan", scanCmd),
+    vscode.commands.registerCommand("baic.scan", () => scanCmd(false)),
     vscode.commands.registerCommand("baic.export", exportCmd),
+    vscode.commands.registerCommand("baic.searchFiles", async () => {
+      const value = await vscode.window.showInputBox({
+        prompt: "Search file names, paths, and categories",
+        placeHolder: "Try .kt, README, or java_kotlin",
+        value: state.searchQuery,
+      });
+      if (value === undefined) return;
+      state.searchQuery = value.trim();
+      refreshAll();
+    }),
+    vscode.commands.registerCommand("baic.chooseFormat", async () => {
+      const picked = await vscode.window.showQuickPick(["All formats", ...availableFormats(state)], {
+        placeHolder: "Filter the search results by file format",
+      });
+      if (!picked) return;
+      state.formatFilter = picked === "All formats" ? "" : picked;
+      refreshAll();
+    }),
+    vscode.commands.registerCommand("baic.selectSearchResults", () => {
+      selectSearchResults(state);
+      refreshAll();
+    }),
+    vscode.commands.registerCommand("baic.restore", async () => {
+      if (!requireTrusted()) return;
+      const picked = await vscode.window.showOpenDialog({
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+        title: "Select a gzip export folder (manifest + payload)",
+      });
+      if (!picked?.[0]) return;
+      const dest = await vscode.window.showOpenDialog({
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+        title: "Select an empty folder to restore into",
+      });
+      if (!dest?.[0]) return;
+      try {
+        const result = restoreExport(picked[0].fsPath, dest[0].fsPath, false);
+        vscode.window.showInformationMessage(`Restored ${result.restoredCount} file(s) to ${result.destination}`);
+      } catch (err) {
+        const message = err instanceof RestoreError || err instanceof Error ? err.message : String(err);
+        vscode.window.showErrorMessage(message);
+      }
+    }),
+    vscode.commands.registerCommand("baic.cycleTransport", async () => {
+      const current = cfg().get<string>("transport") ?? "tar-gz";
+      await cfg().update("transport", current === "tar-gz" ? "text" : "tar-gz", vscode.ConfigurationTarget.Workspace);
+      refreshAll();
+    }),
+    vscode.commands.registerCommand("baic.toggleForceBundle", () => toggleSetting("forceBundle")),
+    vscode.commands.registerCommand("baic.toggleForceIgnored", async () => {
+      await toggleSetting("forceIgnored");
+      await scanCmd(true);
+    }),
+    vscode.commands.registerCommand("baic.toggleSplit", () => toggleSetting("split")),
+    vscode.commands.registerCommand("baic.setExcludePaths", async () => {
+      const value = await vscode.window.showInputBox({
+        prompt: "Exclude paths (comma-separated, like history/,docs/,tests/)",
+        value: cfg().get<string>("excludePaths") ?? "",
+      });
+      if (value === undefined) return;
+      await cfg().update("excludePaths", value, vscode.ConfigurationTarget.Workspace);
+      await scanCmd(true);
+    }),
+    vscode.commands.registerCommand("baic.setForceIncludeFormats", async () => {
+      const value = await vscode.window.showInputBox({
+        prompt: "Force-include formats for gzip (comma-separated, like .sqlite3)",
+        value: cfg().get<string>("forceIncludeFormats") ?? "",
+      });
+      if (value === undefined) return;
+      await cfg().update("forceIncludeFormats", value, vscode.ConfigurationTarget.Workspace);
+      await scanCmd(true);
+    }),
     vscode.commands.registerCommand("baic.refresh", scanCmd),
     vscode.commands.registerCommand("baic.toggleCategory", (category: string) => {
       toggleCategory(state, category);
@@ -392,6 +549,8 @@ export function activate(context: vscode.ExtensionContext): void {
       if (e.affectsConfiguration("baic")) refreshAll();
     }),
   );
+
+  void scanCmd(true);
 }
 
 export function deactivate(): void {}

@@ -26,15 +26,14 @@ No Python install is required; VS Code already provides Node for the extension h
 
 ## Use
 
-1. Open a folder.
-2. Open the **AI Context** view in the Activity Bar.
-3. In **1. Scan and select files**, click **Scan project**.
-4. Check the files you want. Open **Filters and options** only if you need to narrow by category, keyword, filename, or path. You can also right-click a file and choose **Add to AI Context**.
-5. Click the **Export** icon in the file section's title bar, or open **3. Export results** and click **Export selected files**.
-6. Open `prompt.md` (Agent Contract) and attach the bundles to your assistant.
+1. Open a folder. The catalog loads with it.
+2. Open the **AI Context** view in the Activity Bar (**Files**, **Options**, **Last export**).
+3. In **Options**, search file names, paths, or categories; choose a file format to narrow the results; then **Select all results** or check individual files. Content keywords and explicit paths are separate selectors.
+4. Click **Export** in Files. Only checked files in the current results are exported. gzip is the default and writes `baic_prompt.md`.
+5. **Restore gzip** unpacks a previous export.
 
 ## Mapping to `baic`
 
-This Host covers the same workflow as the `baic` CLI: scan, filter (category / path / keyword), redact, secret skip, oversized-file handling, filetree, code graph, and project overview.
+This Host covers the same workflow as the `baic` CLI: catalog, search and file-format filtering, selection by category / path / content keyword, gzip or text transport, restore, redact, secret skip, oversized-file handling, filetree, code graph, and project overview.
 
 Settings live under **Build AI Context** (`baic.*`).

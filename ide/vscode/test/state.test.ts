@@ -12,6 +12,9 @@ import {
   createState,
   exportMaxFileLines,
   recordExport,
+  availableFormats,
+  searchResults,
+  selectSearchResults,
   selectionFiles,
   setNameFilters,
   toggleCategory,
@@ -27,6 +30,21 @@ test("after scan, python files are checked", async () => {
   assert.ok(state.checked.has("main.py"));
   const files = selectionFiles(state);
   assert.ok(files.some((f) => f.relPath === "main.py"));
+});
+
+test("search and file format compose before select all and export", async () => {
+  const catalog = await scan(root, { includeSecretFiles: false });
+  const state = createState();
+  applyScan(state, catalog);
+  assert.ok(availableFormats(state).includes(".py"));
+  state.searchQuery = "src";
+  state.formatFilter = ".py";
+  assert.deepEqual(searchResults(state).map((f) => f.relPath), ["src/util.py"]);
+  state.checked.clear();
+  assert.equal(selectSearchResults(state), 1);
+  assert.deepEqual(selectionFiles(state).map((f) => f.relPath), ["src/util.py"]);
+  state.searchQuery = "python";
+  assert.deepEqual(searchResults(state).map((f) => f.relPath).sort(), ["main.py", "src/util.py"]);
 });
 
 test("toggling python off drops main.py when it is the only remaining category constraint", async () => {
@@ -69,6 +87,7 @@ test("checking an oversized file exports it in the bundle", async () => {
         redact: false,
         projectOverview: false,
         updateGitignore: false,
+        transport: "text",
       },
     );
     const bundle = readFileSync(result.bundlePaths[0], "utf8");

@@ -15,8 +15,15 @@ class BaicSettings : PersistentStateComponent<BaicSettings.State> {
         var includeSecretFiles: Boolean = false,
         var projectOverview: Boolean = false,
         var writeGraph: String = "off",
-        var updateGitignore: Boolean = true,
+        var updateGitignore: Boolean = false,
         var outputDir: String = "",
+        var transport: String = "tar-gz",
+        var forceBundle: Boolean = false,
+        var forceIgnored: Boolean = false,
+        var split: Boolean = false,
+        var excludePaths: String = "",
+        var forceIncludeFormats: String = "",
+        var task: String = "",
     )
 
     private var state = State()

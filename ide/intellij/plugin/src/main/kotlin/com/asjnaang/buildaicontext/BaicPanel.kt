@@ -15,6 +15,7 @@ import java.awt.GridLayout
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JCheckBox
+import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
@@ -27,12 +28,15 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
     private val controller = project.getService(BaicController::class.java)
     private val categoryBoxes = LinkedHashMap<String, JCheckBox>()
     private val keywordField = JBTextField()
+    private val searchField = JBTextField()
+    private lateinit var formatBox: JComboBox<String>
     private val nameField = JBTextField()
     private val pathField = JBTextField()
     private val treeRoot = CheckedTreeNode("files")
     private val treeModel = DefaultTreeModel(treeRoot)
     private val tree: CheckboxTree
     private lateinit var summaryLabel: JLabel
+    private lateinit var lastExportLabel: JLabel
     private lateinit var exportButton: JButton
     private var rebuilding = false
 
@@ -60,12 +64,13 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
         setContent(buildUi())
         controller.addListener { reload() }
         reload()
+        controller.scanProject()
     }
 
     private fun buildUi(): JComponent {
         val policy = loadPolicy()
         val categoriesPanel = JPanel().apply {
-            layout = GridLayout(0, 2, 8, 2)
+            layout = GridLayout(0, 1, 4, 2)
             border = JBUI.Borders.empty(4)
         }
         for (category in policy.categoryDescriptions.keys) {
@@ -89,12 +94,70 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
         listen(keywordField) { controller.state.setKeywords(keywordField.text.orEmpty()) }
         listen(nameField) { controller.state.setNameFilters(nameField.text.orEmpty()) }
         listen(pathField) { controller.state.setPaths(pathField.text.orEmpty()) }
+        searchField.emptyText.text = "Search files, paths, categories"
+        listen(searchField) { controller.state.searchQuery = searchField.text.orEmpty() }
+        formatBox = JComboBox(arrayOf("All formats"))
+        formatBox.addActionListener {
+            if (rebuilding) return@addActionListener
+            controller.state.formatFilter = (formatBox.selectedItem as? String).orEmpty().takeUnless { it == "All formats" }.orEmpty()
+            reload()
+        }
 
-        exportButton = JButton("3. Export selected files").apply {
+        exportButton = JButton("Export").apply {
+            alignmentX = java.awt.Component.LEFT_ALIGNMENT
+            maximumSize = java.awt.Dimension(Int.MAX_VALUE, preferredSize.height)
             addActionListener { controller.exportSelection() }
         }
 
+        val settings = BaicSettings.getInstance().state
+        val transportBox = JComboBox(arrayOf("tar-gz", "text")).apply {
+            selectedItem = settings.transport
+            addActionListener {
+                BaicSettings.getInstance().state.transport = selectedItem as String
+            }
+        }
+        val forceBundleBox = JCheckBox("Force bundle oversized files").apply {
+            isSelected = settings.forceBundle
+            addActionListener { BaicSettings.getInstance().state.forceBundle = isSelected }
+        }
+        val forceIgnoredBox = JCheckBox("Force ignored (uses Paths, like --force-ignored --paths)").apply {
+            isSelected = settings.forceIgnored
+            addActionListener {
+                BaicSettings.getInstance().state.forceIgnored = isSelected
+                controller.scanProject()
+            }
+        }
+        val splitBox = JCheckBox("Split gzip payloads under 19.9 MB").apply {
+            isSelected = settings.split
+            addActionListener { BaicSettings.getInstance().state.split = isSelected }
+        }
+        val excludeField = JBTextField(settings.excludePaths).apply {
+            emptyText.text = "history/,docs/,tests/"
+        }
+        listen(excludeField) {
+            BaicSettings.getInstance().state.excludePaths = excludeField.text.orEmpty()
+        }
+        val formatsField = JBTextField(settings.forceIncludeFormats).apply {
+            emptyText.text = ".sqlite3"
+        }
+        listen(formatsField) {
+            BaicSettings.getInstance().state.forceIncludeFormats = formatsField.text.orEmpty()
+        }
+        val taskField = JBTextField(settings.task).apply {
+            emptyText.text = "Task for baic_prompt.md"
+        }
+        listen(taskField) { BaicSettings.getInstance().state.task = taskField.text.orEmpty() }
         val filters = panel {
+            row("Task") { cell(taskField).align(AlignX.FILL) }
+            row { cell(forceBundleBox) }
+            row { cell(forceIgnoredBox) }
+            row { cell(splitBox) }
+            row("Exclude paths") {
+                cell(excludeField).align(AlignX.FILL)
+            }
+            row("Force include formats") {
+                cell(formatsField).align(AlignX.FILL)
+            }
             row("Categories") {
                 cell(categoriesPanel).align(AlignX.FILL)
             }
@@ -108,40 +171,71 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
                 cell(pathField).align(AlignX.FILL)
             }
         }
-
-        filters.isVisible = false
-        val scanButton = JButton("1. Scan project").apply {
-            addActionListener {
-                summaryLabel.text = "Scanning project…"
-                controller.scanProject()
-            }
+        val filtersScroll = JBScrollPane(filters).apply {
+            preferredSize = java.awt.Dimension(280, 230)
+            maximumSize = java.awt.Dimension(Int.MAX_VALUE, 230)
+            isVisible = false
         }
-        val filtersButton = JButton("Show filters").apply {
+
+        val filtersButton = JButton("Show options").apply {
             addActionListener {
-                filters.isVisible = !filters.isVisible
-                text = if (filters.isVisible) "Hide filters" else "Show filters"
+                filtersScroll.isVisible = !filtersScroll.isVisible
+                text = if (filtersScroll.isVisible) "Hide options" else "Show options"
                 parent.revalidate()
             }
         }
-        summaryLabel = JLabel("Scan this project to choose files for export.")
+        summaryLabel = JLabel("Cataloging this project…")
+        lastExportLabel = JLabel("No export yet")
         val actions = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0)).apply {
-            add(scanButton)
-            add(exportButton)
+            add(JButton("Restore gzip").apply { addActionListener { controller.restoreFromDisk() } })
+            add(JButton("Refresh catalog").apply { addActionListener { controller.scanProject() } })
+        }
+        val packageRow = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0)).apply {
+            add(JLabel("Package"))
+            add(transportBox)
+        }
+        val searchControls = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            alignmentX = java.awt.Component.LEFT_ALIGNMENT
+            add(JLabel("Search files"))
+            add(searchField)
+            add(JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0)).apply {
+                add(JLabel("File format"))
+                add(formatBox)
+            })
+            add(JButton("Select all results").apply {
+                alignmentX = java.awt.Component.LEFT_ALIGNMENT
+                addActionListener {
+                    controller.state.selectAllResults()
+                    reload()
+                }
+            })
         }
         val header = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             border = JBUI.Borders.empty(8)
-            add(JLabel("Scan → select files → export bundles"))
-            add(actions)
+            summaryLabel.alignmentX = java.awt.Component.LEFT_ALIGNMENT
+            packageRow.alignmentX = java.awt.Component.LEFT_ALIGNMENT
+            actions.alignmentX = java.awt.Component.LEFT_ALIGNMENT
+            filtersButton.alignmentX = java.awt.Component.LEFT_ALIGNMENT
+            filtersScroll.alignmentX = java.awt.Component.LEFT_ALIGNMENT
             add(summaryLabel)
+            add(searchControls)
+            add(exportButton)
+            add(packageRow)
+            add(actions)
             add(filtersButton)
-            add(filters)
+            add(filtersScroll)
+            add(JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0)).apply {
+                add(lastExportLabel)
+                add(JButton("Open last").apply { addActionListener { controller.openLastExport() } })
+            })
         }
         val wrapper = JPanel(BorderLayout())
         wrapper.add(header, BorderLayout.NORTH)
         val selection = JPanel(BorderLayout()).apply {
             border = JBUI.Borders.empty(0, 8, 8, 8)
-            add(JLabel("2. Choose files · expand folders and use checkboxes"), BorderLayout.NORTH)
+            add(JLabel("Files · uncheck to omit"), BorderLayout.NORTH)
             add(JBScrollPane(tree), BorderLayout.CENTER)
         }
         wrapper.add(selection, BorderLayout.CENTER)
@@ -166,6 +260,12 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
         try {
             val catalog = controller.state.catalog
             if (catalog != null) {
+                val formats = listOf("All formats") + controller.state.availableFormats()
+                if ((0 until formatBox.itemCount).map { formatBox.getItemAt(it) } != formats) {
+                    formatBox.removeAllItems()
+                    formats.forEach { formatBox.addItem(it) }
+                }
+                formatBox.selectedItem = controller.state.formatFilter.ifEmpty { "All formats" }
                 val counts = catalog.files.groupingBy { it.category }.eachCount()
                 for ((category, box) in categoryBoxes) {
                     val n = counts[category] ?: 0
@@ -179,6 +279,7 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
                 }
             }
             syncField(keywordField, controller.state.filters.keywords.joinToString(" "))
+            syncField(searchField, controller.state.searchQuery)
             syncField(nameField, controller.state.filters.nameFilters.joinToString(" "))
             syncField(pathField, controller.state.filters.paths.joinToString(", "))
             val (included, oversized) = controller.state.visibleFiles()
@@ -228,16 +329,19 @@ class BaicPanel(private val project: Project) : com.intellij.openapi.ui.SimpleTo
 
     private fun updateSummary() {
         val catalog = controller.state.catalog
+        lastExportLabel.text = controller.lastExport?.let { "Last: ${java.io.File(it.outputDir).name}" } ?: "No export yet"
         if (catalog == null) {
-            summaryLabel.text = "Scan this project to choose files for export."
-            exportButton.isEnabled = false
+            summaryLabel.text = "Cataloging this project… Export waits for the catalog."
+            exportButton.text = "Export"
+            exportButton.isEnabled = true
             return
         }
         val (included, oversized) = controller.state.visibleFiles()
         val visible = (included + oversized).mapTo(HashSet()) { it.relPath }
         val selected = controller.state.checked.count { it in visible }
-        summaryLabel.text = "<html>${catalog.files.size} files found · $selected selected<br>${oversized.size} large files start unchecked</html>"
-        exportButton.text = "3. Export $selected files"
+        val transport = BaicSettings.getInstance().state.transport.ifBlank { "tar-gz" }
+        summaryLabel.text = "<html>${visible.size} results · $selected selected · $transport<br>${oversized.size} large files start unchecked</html>"
+        exportButton.text = "Export $selected files"
         exportButton.isEnabled = selected > 0
     }
 
