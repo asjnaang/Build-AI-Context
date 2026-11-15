@@ -125,6 +125,7 @@ class HostStateTest {
                 redact = false,
                 projectOverview = false,
                 updateGitignore = false,
+                transport = "text",
             ),
         )
         assertTrue(Files.exists(Path.of(result.manifestPath)))

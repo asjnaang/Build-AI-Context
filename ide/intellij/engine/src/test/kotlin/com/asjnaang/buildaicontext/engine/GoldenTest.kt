@@ -36,6 +36,7 @@ class GoldenTest {
                 redact = false,
                 projectOverview = false,
                 updateGitignore = false,
+                transport = "text",
             ),
         )
         val bundle = Files.readString(Path.of(result.bundlePaths[0]))

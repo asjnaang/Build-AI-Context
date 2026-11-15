@@ -14,6 +14,9 @@ function src(rel: string, category: string, text: string): SourceFile {
     sizeBytes: text.length,
     sha256: "x",
     lines,
+    snapshotBytes: Buffer.from(text, "utf8"),
+    mode: 0o644,
+    encoding: "text",
   };
 }
 

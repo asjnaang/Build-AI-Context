@@ -30,19 +30,23 @@ fun loadPolicy(): EnginePolicy {
     return policy
 }
 
-fun loadPromptMd(): String {
-    val stream = EnginePolicy::class.java.getResourceAsStream("/prompt.md")
+fun loadPromptMd(transport: String = "text", task: String? = null): String {
+    val name = if (transport == "tar-gz") "baic_prompt_gzip.md" else "baic_prompt_text.md"
+    val stream = EnginePolicy::class.java.getResourceAsStream("/$name")
     if (stream != null) {
-        return stream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+        return applyTask(stream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }, task)
     }
     var dir = Path.of(System.getProperty("user.dir")).toAbsolutePath()
     while (true) {
-        val candidate = dir.resolve("ide/engine-ts/prompt.md")
-        if (Files.isRegularFile(candidate)) return Files.readString(candidate)
+        val candidate = dir.resolve("ide/engine-ts/$name")
+        if (Files.isRegularFile(candidate)) return applyTask(Files.readString(candidate), task)
         dir = dir.parent ?: break
     }
-    return ""
+    error("Bundled prompt is missing: $name")
 }
+
+private fun applyTask(prompt: String, task: String?): String =
+    if (task == null) prompt else prompt.replace("[PASTE THE SPECIFIC FEATURE / BUGFIX / REFACTOR REQUEST HERE]", task)
 
 private fun readPolicyText(): String {
     val stream = EnginePolicy::class.java.getResourceAsStream("/policy.json")

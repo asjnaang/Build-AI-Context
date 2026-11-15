@@ -4,6 +4,9 @@ class EngineCanceled : RuntimeException("canceled")
 
 data class ScanOptions(
     val includeSecretFiles: Boolean = false,
+    val forceIgnoredPaths: List<String> = emptyList(),
+    val forceIncludeFormats: List<String> = emptyList(),
+    val excludePaths: List<String> = emptyList(),
     val isCanceled: () -> Boolean = { false },
 )
 
@@ -15,6 +18,9 @@ data class SourceFile(
     val sizeBytes: Long,
     val sha256: String,
     val lines: List<String>,
+    val snapshotBytes: ByteArray = byteArrayOf(),
+    val mode: Int = 420,
+    val encoding: String = "text",
 )
 
 data class Catalog(
@@ -52,6 +58,10 @@ data class ExportOptions(
     val writeGraph: String? = null,
     val updateGitignore: Boolean = true,
     val includeSecretFiles: Boolean = false,
+    val transport: String = "tar-gz",
+    val forceBundle: Boolean = false,
+    val split: Boolean = false,
+    val task: String? = null,
     val isCanceled: () -> Boolean = { false },
 )
 

@@ -7,6 +7,9 @@ export class EngineCanceled extends Error {
 
 export interface ScanOptions {
   includeSecretFiles: boolean;
+  forceIgnoredPaths?: string[];
+  forceIncludeFormats?: string[];
+  excludePaths?: string[];
   isCanceled?: () => boolean;
 }
 
@@ -18,6 +21,9 @@ export interface SourceFile {
   sizeBytes: number;
   sha256: string;
   lines: string[];
+  snapshotBytes: Buffer;
+  mode: number;
+  encoding: "text" | "binary";
 }
 
 export interface Catalog {
@@ -33,6 +39,7 @@ export interface Filters {
   paths: string[];
   nameFilters: string[];
   keywords: string[];
+  excludePaths?: string[];
 }
 
 export interface SelectionMetadata {
@@ -56,6 +63,10 @@ export interface ExportOptions {
   writeGraph?: "txt" | "json";
   updateGitignore: boolean;
   includeSecretFiles?: boolean;
+  transport?: "tar-gz" | "text";
+  forceBundle?: boolean;
+  split?: boolean;
+  task?: string;
   isCanceled?: () => boolean;
 }
 
