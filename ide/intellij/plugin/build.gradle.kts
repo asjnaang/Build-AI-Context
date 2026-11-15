@@ -36,6 +36,11 @@ dependencies {
 }
 
 intellijPlatform {
+    pluginVerification {
+        ides {
+            providers.environmentVariable("ANDROID_STUDIO_HOME").orNull?.let { local(file(it)) }
+        }
+    }
     pluginConfiguration {
         id = "com.asjnaang.buildaicontext"
         name = "Build AI Context"
